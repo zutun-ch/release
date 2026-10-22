@@ -121,6 +121,7 @@ test('plan.mjs: a tag on a commit that is not on main releases nothing', () => {
 	});
 	assert.equal(r.status, 1);
 	assert.match(r.stderr, new RegExp(`^::error::the release tag points at ${side}, which isn't on main`));
+	assert.match(r.stderr, /tag the merged commit on main with a new version \(release tags can't be moved or deleted/);
 	assert.deepEqual(r.outputs, {});
 });
 

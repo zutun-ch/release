@@ -20,7 +20,7 @@ export function requireOnMain(commit, cwd = process.cwd()) {
 	const ancestor = git('merge-base', '--is-ancestor', commit, MAIN);
 	if (ancestor.status === 1) {
 		throw new ReleaseError(
-			`the release tag points at ${commit}, which isn't on main. Releases are commits on main, which only takes reviewed changes: merge first, then tag the commit on main (and delete this tag).`,
+			`the release tag points at ${commit}, which isn't on main. Releases are commits on main, which only takes reviewed changes: merge first, then tag the merged commit on main with a new version (release tags can't be moved or deleted, so this version stays unused).`,
 		);
 	}
 	if (ancestor.status !== 0) {
