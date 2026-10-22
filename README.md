@@ -16,12 +16,12 @@ A push to `main` builds and checks everything and stops there. A tag `v<N>` rele
 | Plan | the name from the repository (never from an input), the version from the tag, the images from the repo's layout | read |
 | Images | builds each image for `linux/amd64` and `linux/arm64`; for a release pushes it to `ghcr.io/<owner>/<image>:v<N>` and stops unless every package is public | read, packages write |
 | Bundle | writes the version into `manifest.yaml` and the pushed digests into `compose.yaml` (in the bundle only), checks PROTOCOL §6.5, packs the bundle deterministically | read |
-| zutun-agent lint | unpacks the bundle and runs `zutun-agent lint`, built from the agent repo at a pinned commit | read |
+| zutun-agent lint | checks the bundle is the one the bundle job packed, unpacks it and runs `zutun-agent lint`, built from the agent repo at a pinned commit | read |
 | Agent builds (core, agent only) | `go build -tags prod` for both architectures, version = build number = N | read |
 | Publish to staging | only when the staging variables exist: signs with the staging key, uploads to the staging control plane | read, id-token |
 | Publish | in the environment `release`, after a required reviewer approves: signs the **same** bytes with the release key through Cloud KMS, verifies the signature against the key's public key, uploads in the three steps of CONTROL-PLANE §7 with a fresh OIDC token for each | read, id-token |
 
-Nothing from the repo being released runs in the publish jobs: they check out only this repo's tooling (at the workflow's own commit) and the build artifact, whose files are checked against `release.json` before signing. Each run's summary shows name, version, sha256, size, commit and image digests, for the reviewer who approves.
+Nothing from the repo being released runs in the publish jobs: they check out only this repo's tooling (at the workflow's own commit) and the build artifact. Any job of the caller's workflow could upload an artifact, so it is trusted only through job outputs, which no other job can change: lint checks the bundle's sha256 against the bundle job's, and publish checks `release.json` against the build job's sha256, its artifacts against the plan's name, kind and version, and every file against `release.json`, all before signing. Each run's summary shows name, version, sha256, size, commit and image digests, for the reviewer who approves.
 
 ## Calling the pipeline
 
