@@ -24,6 +24,24 @@ gh api -X PUT "orgs/$GITHUB_ORG/teams/platform-core/memberships/<github user>" -
 
 Partner teams get one team each, with write access to their own module repos only (`setup-repo.sh --partner-team`). Only zutun staff are organisation owners or repo admins.
 
+### Member privileges: only staff administer repos
+
+The KMS trust policy accepts a token from any repo of the organisation whose job ran in an environment called `release` (google-cloud-kms.md, step 4), and the reviewers of that environment are the only approval a release gets. Whoever administers a repo decides whether its `release` environment has reviewers, and its repo variables take precedence over the organisation's `ZUTUN_*` variables, so a repo admin also decides which control plane a release goes to. GitHub lets every member create repositories by default, and the creator administers the new repo: a partner could then create `module-anything`, give it a `release` environment without reviewers and have any bundle signed with release-modules.
+
+So members can't create repositories, and their base permission is read; zutun staff create the repos and run `setup-repo.sh` on each:
+
+```sh
+gh api -X PATCH "orgs/$GITHUB_ORG" \
+  -F members_can_create_repositories=false \
+  -F members_can_create_public_repositories=false \
+  -F members_can_create_private_repositories=false \
+  -F members_can_create_internal_repositories=false \
+  -f default_repository_permission=read
+gh api "orgs/$GITHUB_ORG" --jq '{members_can_create_repositories, default_repository_permission}'
+```
+
+`setup-repo.sh` refuses a repo whose own or whose `release` environment's variables include a `ZUTUN_*` name.
+
 ### The release repo is public
 
 Every module and platform repo calls the workflows in `<owner>/release` and checks out its scripts with its own `GITHUB_TOKEN`, which can read public repos but no other private one. The repo holds no secrets and nothing deployment-specific.
@@ -119,7 +137,7 @@ scripts/setup-repo.sh zutun-ch/caddy
 scripts/setup-repo.sh zutun-ch/module-mail --prevent-self-review
 ```
 
-It gives `platform-core` maintain access (and the partner team write access), makes the default workflow token read-only, and creates or updates the `release` environment: `platform-core` as required reviewers, deployments from `v*` tags only (any branch rule is removed), and "prevent self-review" when asked. Then it reports whether `.github/CODEOWNERS` and the caller workflow `.github/workflows/release.yml` exist; those are files in the repo, added by pull request.
+It gives `platform-core` maintain access (and the partner team write access), makes the default workflow token read-only, and creates or updates the `release` environment: `platform-core` as required reviewers, deployments from `v*` tags only (any branch rule is removed), and "prevent self-review" when asked. It fails if the repo or its `release` environment has a `ZUTUN_*` variable of its own, which would override the organisation's. Then it reports whether `.github/CODEOWNERS` and the caller workflow `.github/workflows/release.yml` exist; those are files in the repo, added by pull request.
 
 GitHub environments ask for one approval from the listed reviewers. Architecture §8 wants two people for the core releases "once possible"; until GitHub can require two approvals, "prevent self-review" makes sure the one approval comes from someone other than the person who pushed the tag.
 

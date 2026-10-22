@@ -11,6 +11,8 @@
 # - creates or updates the environment "release": the core team as required reviewers,
 #   deployments from v* tags only, and "prevent self-review" when asked (once two people can
 #   approve);
+# - refuses ZUTUN_* variables of the repo or its release environment, which would override the
+#   organisation's (another control plane, another key) for this repo's releases;
 # - reports whether CODEOWNERS and the release caller workflow are in place.
 # The organisation-level parts (rulesets, package settings, variables) are in the guide.
 set -eu
@@ -77,6 +79,20 @@ case $policies in
 	;;
 esac
 say "environment release: reviewers $core_team, v* tags only, prevent self-review $prevent_self_review"
+
+# The release reads the organisation's ZUTUN_* variables, but a repo or environment variable of
+# the same name takes precedence for this repo: it could send a signed release to another
+# control plane. None may exist; deleting one is left to a person, who should ask how it got there.
+repo_vars=$(gh api "repos/$repo/actions/variables" --paginate --jq '.variables[].name | "repo variable \(.)"')
+env_vars=$(gh api "repos/$repo/environments/release/variables" --paginate --jq '.variables[].name | "release environment variable \(.)"')
+overrides=$(printf '%s\n%s\n' "$repo_vars" "$env_vars" | grep ' ZUTUN_' || true)
+if [ -n "$overrides" ]; then
+	printf '%s\n' "$overrides" | while read -r line; do
+		say "override: $line takes precedence over the organisation's; delete it" >&2
+	done
+	exit 1
+fi
+say "variables: the organisation's ZUTUN_* apply"
 
 # What lives in the repo itself: reported, not written (main takes changes through pull requests).
 check_file() {

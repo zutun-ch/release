@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { repo, scratch } from './helpers.mjs';
 
 /** A fake gh: answers the reads from env, logs every call (and stdin of --input -) to a file. */
-function fakeGh(policies) {
+function fakeGh(policies, { repoVars = '', envVars = '' } = {}) {
 	const dir = scratch({
 		gh: `#!/bin/sh
 log="$(dirname "$0")/calls"
@@ -21,6 +21,8 @@ case "$*" in
   "api orgs/acme/teams/platform-core --jq .id") echo 42 ;;
   "api repos/acme/module-mail/environments/release/deployment-branch-policies --jq"*) printf '%s' "$FAKE_POLICIES" ;;
   "api repos/acme/module-mail/contents/.github/CODEOWNERS --jq .path") echo .github/CODEOWNERS ;;
+  "api repos/acme/module-mail/actions/variables --paginate --jq"*) [ "$FAKE_REPO_VARS" != FAIL ] || exit 1; [ -z "$FAKE_REPO_VARS" ] || printf 'repo variable %s\n' $FAKE_REPO_VARS ;;
+  "api repos/acme/module-mail/environments/release/variables --paginate --jq"*) [ -z "$FAKE_ENV_VARS" ] || printf 'release environment variable %s\n' $FAKE_ENV_VARS ;;
   "api repos/acme/module-mail/contents/"*) exit 1 ;;
 esac
 `,
@@ -30,7 +32,7 @@ esac
 		run: (args) =>
 			spawnSync('sh', [path.join(repo, 'scripts/setup-repo.sh'), ...args], {
 				encoding: 'utf8',
-				env: { PATH: `${dir}:${process.env.PATH}`, FAKE_POLICIES: policies },
+				env: { PATH: `${dir}:${process.env.PATH}`, FAKE_POLICIES: policies, FAKE_REPO_VARS: repoVars, FAKE_ENV_VARS: envVars },
 			}),
 		calls: () => readFileSync(path.join(dir, 'calls'), 'utf8'),
 	};
@@ -55,6 +57,22 @@ test('a new repo: teams, read-only workflow token, the release environment for v
 	assert.match(calls, /deployment-branch-policies -f name=v\* -f type=tag/);
 	assert.match(r.stdout, /ok: \.github\/CODEOWNERS/);
 	assert.match(r.stdout, /missing: \.github\/workflows\/release\.yml/);
+	assert.match(r.stdout, /variables: the organisation's ZUTUN_\* apply/);
+});
+
+test('a ZUTUN_* variable of the repo or its release environment is refused', () => {
+	const gh = fakeGh('', { repoVars: 'ZUTUN_CONTROL_PLANE_ORIGIN OTHER', envVars: 'ZUTUN_KMS_RELEASE_MODULES' });
+	const r = gh.run(['acme/module-mail']);
+	assert.equal(r.status, 1);
+	assert.match(r.stderr, /override: repo variable ZUTUN_CONTROL_PLANE_ORIGIN takes precedence over the organisation's; delete it/);
+	assert.match(r.stderr, /override: release environment variable ZUTUN_KMS_RELEASE_MODULES takes precedence/);
+	assert.doesNotMatch(r.stderr, /OTHER/);
+	// The repo's own non-ZUTUN variables are its business.
+	assert.equal(fakeGh('', { repoVars: 'OTHER' }).run(['acme/module-mail']).status, 0);
+	// If GitHub can't list them, nothing is claimed.
+	const failing = fakeGh('', { repoVars: 'FAIL' }).run(['acme/module-mail']);
+	assert.notEqual(failing.status, 0);
+	assert.doesNotMatch(failing.stdout, /variables: the organisation's/);
 });
 
 test('run again: the v* tag rule stays, other rules go, nothing is added twice', () => {

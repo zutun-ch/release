@@ -70,6 +70,8 @@ The provider's attribute condition is the trust policy of architecture §8. A to
 - `environment` is `release` (the job waited for a required reviewer);
 - `ref` is a `v*` tag.
 
+The condition can't tell whether a repo's `release` environment has reviewers: that is GitHub's side, which only zutun staff administer (github-setup.md, "Member privileges").
+
 ```sh
 export ORG_ID=$(gh api "orgs/$GITHUB_ORG" --jq .id)
 export MODULE_WORKFLOW="$GITHUB_ORG/release/.github/workflows/module.yml@refs/heads/main"
