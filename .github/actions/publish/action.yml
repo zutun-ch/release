@@ -18,7 +18,7 @@ inputs:
     description: projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<key>/cryptoKeyVersions/<n>
     required: true
   key-family:
-    description: The key this workflow signs with: release-modules, release-core or staging.
+    description: "The key this workflow signs with: release-modules, release-core or staging."
     required: true
   kind:
     description: The plan's kind, stack or agent.
