@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import { gunzipSync } from 'node:zlib';
 import { PLACEHOLDER_DIGEST } from '../scripts/lib/compose.mjs';
 import { AGENT_COMMIT } from '../scripts/lib/lint.mjs';
-import { repo, scratch } from './helpers.mjs';
+import { platformFile, readJson, repo, scratch } from './helpers.mjs';
 
 const COMMIT = 'abcdef0123456789abcdef0123456789abcdef01';
 const D = `sha256:${'5'.repeat(64)}`;
@@ -222,10 +222,51 @@ test('lint-bundle.sh turns each finding into an error annotation', () => {
 	const r = runScript('lint-bundle.sh', [fakeAgent(1, 'image_digest: services.app.image has no digest\nport_undeclared: 100% sure 8080\n'), 'mail', '/tmp/b']);
 	assert.equal(r.status, 1);
 	assert.deepEqual(r.stdout.trim().split('\n'), [
-		'::error title=zutun-agent lint::image_digest: services.app.image has no digest',
-		'::error title=zutun-agent lint::port_undeclared: 100%25 sure 8080',
+		'::error title=zutun-agent lint - compose policy (MANIFEST §9)::image_digest: services.app.image has no digest',
+		'::error title=zutun-agent lint - compose policy (MANIFEST §9)::port_undeclared: 100%25 sure 8080',
 	]);
 	assert.match(r.stderr, /2 finding\(s\) in mail; nothing is signed/);
+	assert.match(r.stderr, /the layout and compose checks report their first finding only/);
+});
+
+test("lint-bundle.sh titles every reason of the lint contract with what it checks", () => {
+	// The compose reasons lint can report are those of the raw stage: the vectors' `cases`
+	// (platform/test-vectors/README.md, "zutun-agent lint"), less yaml_invalid, which either file
+	// can raise.
+	const vectors = readJson(platformFile('test-vectors/compose-policy.json'));
+	const compose = [...new Set(vectors.cases.map((c) => /^reject:(\w+)$/.exec(c.expect)?.[1]).filter((r) => r && r !== 'yaml_invalid'))];
+	const titles = {
+		bundle_invalid: 'bundle layout (PROTOCOL §6.5)',
+		yaml_invalid: 'YAML',
+		schema_invalid: 'manifest (MANIFEST §2)',
+		name_mismatch: 'manifest (MANIFEST §2)',
+		reference_invalid: 'manifest cross-checks (MANIFEST §2)',
+		...Object.fromEntries(compose.map((reason) => [reason, 'compose policy (MANIFEST §9)'])),
+	};
+	assert.ok(titles.certs_user_mismatch, 'the vectors have the rev 22 reasons');
+	const reasons = Object.keys(titles);
+	const r = runScript('lint-bundle.sh', [fakeAgent(1, reasons.map((reason) => `${reason}: detail\n`).join('')), 'mail', '/tmp/b']);
+	assert.equal(r.status, 1);
+	assert.deepEqual(
+		r.stdout.trim().split('\n'),
+		reasons.map((reason) => `::error title=zutun-agent lint - ${titles[reason]}::${reason}: detail`),
+	);
+});
+
+test('lint-bundle.sh: an unknown reason keeps the plain title; manifest findings alone are complete', () => {
+	const r = runScript('lint-bundle.sh', [fakeAgent(1, 'schema_invalid: version is missing\nsomething_new: detail\n'), 'mail', '/tmp/b']);
+	assert.equal(r.status, 1);
+	assert.deepEqual(r.stdout.trim().split('\n'), [
+		'::error title=zutun-agent lint - manifest (MANIFEST §2)::schema_invalid: version is missing',
+		'::error title=zutun-agent lint::something_new: detail',
+	]);
+	assert.doesNotMatch(r.stderr, /first finding only/);
+});
+
+test('lint-bundle.sh: exit 1 without a finding breaks the contract and fails', () => {
+	const r = runScript('lint-bundle.sh', [fakeAgent(1), 'mail', '/tmp/b']);
+	assert.equal(r.status, 1);
+	assert.match(r.stdout, /^::error title=zutun-agent lint::zutun-agent lint exited 1 without a finding on stdout/);
 });
 
 test('lint-bundle.sh: a usage error means the pinned agent has no lint yet', () => {

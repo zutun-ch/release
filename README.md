@@ -133,7 +133,7 @@ Callers don't pass `agent-commit`. The check only means something if every relea
 | `agent-commit is "…", but a release is linted by the agent this workflow pins` | remove `agent-commit` from the caller's `release.yml` ("The agent commit for lint") |
 | `… carries the placeholder digest, but this repo builds …` / `… is built, but compose.yaml has no …` | `compose.yaml` and the image layout disagree |
 | `… isn't public` | make the package public once (docs/github-setup.md, "Packages") and re-run |
-| `zutun-agent lint: …` findings | the compose policy or the manifest schema, one annotation per finding |
+| `zutun-agent lint - …` findings | one annotation per finding, titled with what it checks: the bundle layout (PROTOCOL §6.5), YAML, the manifest and its cross-checks (MANIFEST §2) or the compose policy (MANIFEST §9). The layout and compose checks report their first finding only, so a fixed bundle may show the next one |
 | `The GitHub organisation variable … is not set` | docs/google-cloud-kms.md, step 8 |
 | `Cloud KMS refused … (403)` | the key's IAM binding or the provider's condition (docs/google-cloud-kms.md, steps 4 and 5) |
 | `… already has this version or a higher one` | tag a higher version |
