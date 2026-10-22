@@ -1,6 +1,9 @@
 // release.json: what a run built, handed from the build jobs to the publish jobs as a workflow
 // artifact next to the files it describes. The publish jobs recompute every file's sha256 and
 // size before they sign, so they sign the bytes that were built, nothing that changed on the way.
+// The build job also reports release.json's own sha256 as a job output, which no other job can
+// change: any job of the caller's workflow can upload a workflow artifact (and replace one), so
+// the artifact alone doesn't prove which job wrote it.
 //
 //   { "commit": "<40 hex>", "notes": "…",
 //     "artifacts": [{ "kind": "stack", "name": "mail", "version": 12, "file": "mail.tar.gz",
@@ -34,15 +37,31 @@ export function writeRelease(dir, { commit, notes, artifacts }) {
 	return release;
 }
 
+/** The sha256 of release.json in `dir`, which the build job reports as its output. */
+export function releaseFileSha256(dir) {
+	return sha256(readFileSync(path.join(dir, RELEASE_FILE)));
+}
+
 /**
- * Reads release.json from `dir` and checks that it describes a release of `commit` and that every
- * file still has the sha256 and size recorded. Returns the release with each artifact's bytes.
+ * Reads release.json from `dir` and checks that it is the file the build job reported (`sha256`),
+ * that it describes a release of `commit`, and that every file still has the sha256 and size
+ * recorded. Returns the release with each artifact's bytes.
  */
-export function readRelease(dir, { commit }) {
+export function readRelease(dir, { commit, sha256: expected }) {
+	if (!/^[0-9a-f]{64}$/.test(expected ?? '')) {
+		throw new ReleaseError(`the build job reported no sha256 of ${RELEASE_FILE} ("${expected ?? ''}")`);
+	}
 	let release;
 	try {
-		release = JSON.parse(readFileSync(path.join(dir, RELEASE_FILE), 'utf8'));
+		const bytes = readFileSync(path.join(dir, RELEASE_FILE));
+		if (sha256(bytes) !== expected) {
+			throw new ReleaseError(
+				`${RELEASE_FILE} isn't the one the build job of this run wrote (sha256 ${sha256(bytes)}, reported ${expected}); nothing is signed`,
+			);
+		}
+		release = JSON.parse(bytes.toString('utf8'));
 	} catch (err) {
+		if (err instanceof ReleaseError) throw err;
 		throw new ReleaseError(`can't read ${RELEASE_FILE} from the build job: ${err.message}`);
 	}
 	if (!COMMIT.test(release.commit ?? '') || release.commit !== commit) {

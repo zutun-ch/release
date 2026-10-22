@@ -1,8 +1,9 @@
 # Signs the release the build jobs handed on ("release-build") with a Cloud KMS key and uploads
 # it to a control plane (scripts/publish.mjs). The Google token comes from GitHub OIDC through
 # Workload Identity Federation; no Google credential is stored anywhere. Nothing from the
-# repository being released runs here: only this tooling and the artifact, which is checked
-# against release.json before it is signed.
+# repository being released runs here: only this tooling and the artifact. The artifact must be
+# the release.json the build job reported (its sha256, a job output no other job can change),
+# list exactly what the plan derived, and every file must match release.json before signing.
 name: Publish
 description: Sign with Cloud KMS, verify, and upload in the three steps of CONTROL-PLANE §7.
 
@@ -18,6 +19,18 @@ inputs:
     required: true
   key-family:
     description: The key this workflow signs with: release-modules, release-core or staging.
+    required: true
+  kind:
+    description: The plan's kind, stack or agent.
+    required: true
+  name:
+    description: The plan's name.
+    required: true
+  version:
+    description: The plan's version, from the tag.
+    required: true
+  release-sha256:
+    description: The build job's sha256 of release.json.
     required: true
 
 runs:
@@ -51,4 +64,8 @@ runs:
         KMS_KEY_VERSION: ${{ inputs.kms-key-version }}
         KEY_FAMILY: ${{ inputs.key-family }}
         GOOGLE_TOKEN: ${{ steps.google.outputs.auth_token }}
+        RELEASE_KIND: ${{ inputs.kind }}
+        RELEASE_NAME: ${{ inputs.name }}
+        RELEASE_VERSION: ${{ inputs.version }}
+        RELEASE_SHA256: ${{ inputs.release-sha256 }}
       run: node "$GITHUB_ACTION_PATH/../../../scripts/publish.mjs"

@@ -141,6 +141,28 @@ test('the plan job sees main, to check that a release tag points at a commit on 
 	}
 });
 
+test('publish jobs sign what the plan and the build job reported, as job outputs', () => {
+	// The artifact alone proves nothing: any job of the caller's workflow can upload one.
+	for (const [wf, kind, sha] of [
+		[module, 'stack', '${{ needs.bundle.outputs.release-sha256 }}'],
+		[core, '${{ needs.plan.outputs.kind }}', '${{ needs.bundle.outputs.release-sha256 || needs.agent.outputs.release-sha256 }}'],
+	]) {
+		for (const job of ['publish', 'publish-staging']) {
+			const def = wf.jobs[job];
+			const step = def.steps.find((s) => s.uses === './.release/.github/actions/publish');
+			assert.equal(step.with.kind, kind, job);
+			assert.equal(step.with.name, '${{ needs.plan.outputs.name }}', job);
+			assert.equal(step.with.version, '${{ needs.plan.outputs.version }}', job);
+			assert.equal(step.with['release-sha256'], sha, job);
+			for (const need of sha.match(/needs\.(\w+)\./g).map((n) => n.split('.')[1])) assert.ok(def.needs.includes(need), `${job} needs ${need}`);
+		}
+	}
+	assert.equal(module.jobs.bundle.outputs['release-sha256'], '${{ steps.bundle.outputs.release-sha256 }}');
+	assert.equal(core.jobs.bundle.outputs['release-sha256'], '${{ steps.bundle.outputs.release-sha256 }}');
+	assert.equal(core.jobs.agent.outputs['release-sha256'], '${{ steps.describe.outputs.release-sha256 }}');
+	assert.equal(actions['.github/actions/stack-bundle/action.yml'].outputs['release-sha256'].value, '${{ steps.pack.outputs.release-sha256 }}');
+});
+
 test('every variable a publish job reads is checked first, by name', () => {
 	for (const wf of [module, core]) {
 		for (const job of ['publish', 'publish-staging']) {

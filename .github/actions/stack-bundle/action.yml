@@ -20,6 +20,9 @@ outputs:
   sha256:
     description: The bundle's sha256.
     value: ${{ steps.pack.outputs.sha256 }}
+  release-sha256:
+    description: The sha256 of release.json, which the publish jobs check the artifact against.
+    value: ${{ steps.pack.outputs.release-sha256 }}
 
 runs:
   using: composite

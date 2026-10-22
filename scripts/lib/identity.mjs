@@ -91,3 +91,13 @@ export function versionFromRef(ref) {
 export function agentArtifactName(arch) {
 	return `zutun-agent-linux-${arch}`;
 }
+
+/**
+ * The artifacts a release of `kind` `name` (the plan's) at `version` consists of: the stack
+ * itself, or the agent's build for each architecture (PROTOCOL §6.2).
+ */
+export function plannedArtifacts(kind, name, version) {
+	if (kind === 'stack') return [{ kind, name, version }];
+	if (kind === 'agent') return ARCHES.map((arch) => ({ kind, name: agentArtifactName(arch), version }));
+	throw new ReleaseError(`unknown kind "${kind}"`);
+}

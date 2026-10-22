@@ -116,6 +116,9 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+    # The publish jobs sign only the release.json this job wrote, whatever the artifact holds.
+    outputs:
+      release-sha256: ${{ steps.bundle.outputs.release-sha256 }}
     steps:
       - name: Check out the module
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -133,6 +136,7 @@ jobs:
           WORKFLOW_SHA: ${{ job.workflow_sha }}
         run: test -n "$WORKFLOW_SHA" && test "$(git -C .release rev-parse HEAD)" = "$WORKFLOW_SHA"
       - name: Bundle
+        id: bundle
         uses: ./.release/.github/actions/stack-bundle
         with:
           name: ${{ needs.plan.outputs.name }}
@@ -170,7 +174,7 @@ jobs:
   # variables exist; until there is a staging control plane it is skipped.
   publish-staging:
     name: Publish to staging
-    needs: [plan, lint]
+    needs: [plan, bundle, lint]
     if: needs.plan.outputs.publish == 'true' && vars.ZUTUN_STAGING_CONTROL_PLANE_ORIGIN != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -205,13 +209,17 @@ jobs:
           workload-identity-provider: ${{ env.ZUTUN_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
           kms-key-version: ${{ env.ZUTUN_KMS_STAGING }}
           key-family: staging
+          kind: stack
+          name: ${{ needs.plan.outputs.name }}
+          version: ${{ needs.plan.outputs.version }}
+          release-sha256: ${{ needs.bundle.outputs.release-sha256 }}
 
   # Production (architecture §8, step 6): the job waits for a required reviewer of the repo's
   # "release" environment, which allows v* tags only. Releases of one module never overlap.
   # A module released to staging only (the reference module, architecture §9) never gets here.
   publish:
     name: Publish
-    needs: [plan, lint, publish-staging]
+    needs: [plan, bundle, lint, publish-staging]
     if: ${{ !cancelled() && !failure() && needs.plan.outputs.publish == 'true' && needs.plan.outputs.production == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -247,3 +255,7 @@ jobs:
           workload-identity-provider: ${{ env.ZUTUN_WORKLOAD_IDENTITY_PROVIDER }}
           kms-key-version: ${{ env.ZUTUN_KMS_RELEASE_MODULES }}
           key-family: release-modules
+          kind: stack
+          name: ${{ needs.plan.outputs.name }}
+          version: ${{ needs.plan.outputs.version }}
+          release-sha256: ${{ needs.bundle.outputs.release-sha256 }}

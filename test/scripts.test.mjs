@@ -2,6 +2,7 @@
 // agent-release.mjs, require-vars.mjs and lint-bundle.sh (with stand-in agents).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -29,7 +30,7 @@ function runScript(script, args, { cwd, env = {} } = {}) {
 	});
 	const outputs = {};
 	const text = readFileSync(path.join(out, 'output.txt'), 'utf8');
-	for (const m of text.matchAll(/^(\w+)<<(\S+)\n([\s\S]*?)\n\2$/gm)) outputs[m[1]] = m[3];
+	for (const m of text.matchAll(/^([\w-]+)<<(\S+)\n([\s\S]*?)\n\2$/gm)) outputs[m[1]] = m[3];
 	return { ...result, outputs, summary: readFileSync(path.join(out, 'summary.md'), 'utf8') };
 }
 
@@ -142,6 +143,7 @@ test('stack-bundle.mjs: a release sets the version and pins digests in the bundl
 	assert.equal(release.commit, COMMIT);
 	assert.deepEqual(release.artifacts.map((a) => [a.kind, a.name, a.version, a.file]), [['stack', 'mail', 7, 'mail.tar.gz']]);
 	assert.equal(r.outputs.sha256, release.artifacts[0].sha256);
+	assert.equal(r.outputs['release-sha256'], createHash('sha256').update(readFileSync(path.join(dir, 'dist/release.json'))).digest('hex'));
 	const tarText = gunzipSync(readFileSync(path.join(dir, 'dist/mail.tar.gz'))).toString('latin1');
 	assert.ok(tarText.includes('version: 7  # set by the pipeline'));
 	assert.ok(tarText.includes(`ghcr.io/zutun-ch/mail@${D}`));
@@ -170,6 +172,7 @@ test('agent-release.mjs describes both architectures as one release', () => {
 		['agent', 'zutun-agent-linux-amd64', 42, 1],
 		['agent', 'zutun-agent-linux-arm64', 42, 2],
 	]);
+	assert.equal(r.outputs['release-sha256'], createHash('sha256').update(readFileSync(path.join(dir, 'release.json'))).digest('hex'));
 });
 
 test('require-vars.mjs names every missing variable', () => {

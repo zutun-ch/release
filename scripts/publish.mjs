@@ -7,6 +7,8 @@
 //   KMS_KEY_VERSION        projects/…/cryptoKeys/<key>/cryptoKeyVersions/<n>
 //   KEY_FAMILY             release-modules, release-core or staging: the key this workflow may use
 //   GOOGLE_TOKEN           the federated token from google-github-actions/auth
+//   RELEASE_KIND, RELEASE_NAME, RELEASE_VERSION   what the plan job derived (job outputs)
+//   RELEASE_SHA256         the build job's sha256 of release.json (a job output)
 //   GITHUB_SHA             the commit of this run (set by the runner)
 
 import { ReleaseError, run, summary } from './lib/actions.mjs';
@@ -17,13 +19,14 @@ import { checkOrigin } from './lib/upload.mjs';
 
 run(async () => {
 	const env = process.env;
-	for (const name of ['RELEASE_DIR', 'CONTROL_PLANE_ORIGIN', 'KMS_KEY_VERSION', 'KEY_FAMILY', 'GOOGLE_TOKEN', 'GITHUB_SHA']) {
+	for (const name of ['RELEASE_DIR', 'RELEASE_KIND', 'RELEASE_NAME', 'RELEASE_VERSION', 'RELEASE_SHA256', 'CONTROL_PLANE_ORIGIN', 'KMS_KEY_VERSION', 'KEY_FAMILY', 'GOOGLE_TOKEN', 'GITHUB_SHA']) {
 		if (!env[name]) throw new ReleaseError(`${name} is not set`);
 	}
 	const origin = checkOrigin(env.CONTROL_PLANE_ORIGIN);
 	const refs = await publish({
 		dir: env.RELEASE_DIR,
 		commit: env.GITHUB_SHA,
+		expected: { kind: env.RELEASE_KIND, name: env.RELEASE_NAME, version: Number(env.RELEASE_VERSION), releaseSha256: env.RELEASE_SHA256 },
 		origin,
 		kmsKeyVersion: env.KMS_KEY_VERSION,
 		family: env.KEY_FAMILY,

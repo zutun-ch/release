@@ -4,7 +4,7 @@
 // For a release it writes the version into manifest.yaml and pins the pushed digests into
 // compose.yaml, in the bundle only (the checkout is never edited); otherwise it checks that the
 // placeholders match the images. It writes <dir>/<name>.tar.gz and <dir>/release.json, and sets
-// the step outputs sha256 and size.
+// the step outputs sha256, size and release-sha256 (of release.json, which the publish jobs check).
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -13,7 +13,7 @@ import { packBundle } from './lib/bundle.mjs';
 import { pinDigests } from './lib/compose.mjs';
 import { setVersion } from './lib/manifest.mjs';
 import { tagNotes } from './lib/notes.mjs';
-import { summaryTable, writeRelease } from './lib/release.mjs';
+import { releaseFileSha256, summaryTable, writeRelease } from './lib/release.mjs';
 
 run(async () => {
 	const args = parseArgs(process.argv.slice(2), ['name', 'version', 'digests', 'out']);
@@ -42,6 +42,7 @@ run(async () => {
 	for (const entry of bundle.entries) console.log(`  ${entry}`);
 	setOutput('sha256', bundle.sha256);
 	setOutput('size', String(bundle.size));
+	setOutput('release-sha256', releaseFileSha256(args.out));
 	const images = Object.entries(digests)
 		.filter(([, d]) => d)
 		.map(([repo, d]) => `- \`${repo}@${d}\``);

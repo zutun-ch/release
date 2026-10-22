@@ -8,7 +8,7 @@ import { verifyRef } from '../scripts/lib/artifact.mjs';
 import { kmsClient } from '../scripts/lib/kms.mjs';
 import { githubTokens } from '../scripts/lib/oidc.mjs';
 import { publish } from '../scripts/lib/publish.mjs';
-import { writeRelease } from '../scripts/lib/release.mjs';
+import { releaseFileSha256, writeRelease } from '../scripts/lib/release.mjs';
 import { fakeControlPlane, fakeGithubOidc, fakeKms } from './fakes.mjs';
 import { keyFromSeed, noWait, scratch } from './helpers.mjs';
 
@@ -33,7 +33,10 @@ function agentBuild() {
 	return dir;
 }
 
-async function run({ dir = agentBuild(), key = CORE_KEY, family = 'release-core', kms: kmsOptions = {}, cp: cpOptions = {} } = {}) {
+/** What the plan and the agent job said this run releases. */
+const agentPlan = (dir) => ({ kind: 'agent', name: 'agent', version: 42, releaseSha256: releaseFileSha256(dir) });
+
+async function run({ dir = agentBuild(), key = CORE_KEY, family = 'release-core', expected, kms: kmsOptions = {}, cp: cpOptions = {} } = {}) {
 	const kms = await fakeKms(key, core, kmsOptions);
 	const cp = await fakeControlPlane({ publicKey: core.publicKey, commit: COMMIT, ...cpOptions });
 	const lines = [];
@@ -44,6 +47,7 @@ async function run({ dir = agentBuild(), key = CORE_KEY, family = 'release-core'
 			origin: cp.url,
 			kmsKeyVersion: key,
 			family,
+			expected: expected ?? agentPlan(dir),
 			kms: kmsClient({ token: 'google-token', endpoint: `${kms.url}/v1`, retry: noWait }),
 			nextToken: githubTokens(cp.url, { env: oidc.env, retry: noWait }),
 			retry: noWait,
@@ -135,8 +139,9 @@ test('a modules key may not sign the agent', async () => {
 
 test('a file changed after the build is refused', async () => {
 	const dir = agentBuild();
+	const expected = agentPlan(dir);
 	writeFileSync(path.join(dir, 'zutun-agent-linux-arm64'), 'something else');
-	const { error, kms } = await run({ dir });
+	const { error, kms } = await run({ dir, expected });
 	assert.match(error.message, /zutun-agent-linux-arm64 isn't the file the build job described/);
 	assert.equal(kms.requests.length, 0);
 });
@@ -144,8 +149,49 @@ test('a file changed after the build is refused', async () => {
 test('a build of another commit is refused', async () => {
 	const dir = scratch({ 'mail.tar.gz': 'bundle' });
 	writeRelease(dir, { commit: 'f'.repeat(40), notes: null, artifacts: [{ kind: 'stack', name: 'mail', version: 3, file: 'mail.tar.gz' }] });
-	const { error } = await run({ dir, key: MODULES_KEY, family: 'release-modules' });
+	const expected = { kind: 'stack', name: 'mail', version: 3, releaseSha256: releaseFileSha256(dir) };
+	const { error } = await run({ dir, key: MODULES_KEY, family: 'release-modules', expected });
 	assert.match(error.message, /describes commit f{40}, but this run is 1234/);
+});
+
+test('a release.json other than the one the build job wrote is refused, however consistent', async () => {
+	// What another job of the caller's workflow could put in place of the artifact: files and
+	// release.json that agree with each other, but aren't what the build job reported.
+	const dir = agentBuild();
+	const expected = agentPlan(dir);
+	writeFileSync(path.join(dir, 'zutun-agent-linux-amd64'), 'another binary');
+	writeRelease(dir, {
+		commit: COMMIT,
+		notes: 'Build 42.',
+		artifacts: ['amd64', 'arm64'].map((arch) => ({ kind: 'agent', name: `zutun-agent-linux-${arch}`, version: 42, file: `zutun-agent-linux-${arch}` })),
+	});
+	const { error, kms, cp } = await run({ dir, expected });
+	assert.match(error.message, /release\.json isn't the one the build job of this run wrote/);
+	assert.equal(kms.requests.length, 0);
+	assert.equal(cp.requests.length, 0);
+});
+
+test('only what the plan names is signed: another name, kind or version is refused', async () => {
+	const stack = () => {
+		const dir = scratch({ 'mail.tar.gz': 'bundle' });
+		writeRelease(dir, { commit: COMMIT, notes: null, artifacts: [{ kind: 'stack', name: 'mail', version: 3, file: 'mail.tar.gz' }] });
+		return dir;
+	};
+	for (const [plan, family, key] of [
+		[{ kind: 'stack', name: 'cloud', version: 3 }, 'release-modules', MODULES_KEY],
+		[{ kind: 'stack', name: 'mail', version: 4 }, 'release-modules', MODULES_KEY],
+		[{ kind: 'agent', name: 'agent', version: 3 }, 'release-core', CORE_KEY],
+	]) {
+		const dir = stack();
+		const { error, kms } = await run({ dir, key, family, expected: { ...plan, releaseSha256: releaseFileSha256(dir) } });
+		assert.match(error?.message ?? '', /this run releases .* but release\.json lists stack mail v3/, JSON.stringify(plan));
+		assert.equal(kms.requests.length, 0);
+	}
+	// The agent's plan wants both architectures, not one.
+	const one = scratch({ 'zutun-agent-linux-amd64': 'amd64 binary' });
+	writeRelease(one, { commit: COMMIT, notes: null, artifacts: [{ kind: 'agent', name: 'zutun-agent-linux-amd64', version: 42, file: 'zutun-agent-linux-amd64' }] });
+	const { error } = await run({ dir: one, expected: { ...agentPlan(one) } });
+	assert.match(error.message, /this run releases agent zutun-agent-linux-amd64 v42, agent zutun-agent-linux-arm64 v42, but release\.json lists agent zutun-agent-linux-amd64 v42/);
 });
 
 test('an upload refusal of the second artifact is reported (the first stays uploaded)', async () => {
