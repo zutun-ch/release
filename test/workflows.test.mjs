@@ -163,6 +163,18 @@ test('publish jobs sign what the plan and the build job reported, as job outputs
 	assert.equal(actions['.github/actions/stack-bundle/action.yml'].outputs['release-sha256'].value, '${{ steps.pack.outputs.release-sha256 }}');
 });
 
+test('lint checks the bundle against the sha256 the bundle job reported', () => {
+	for (const wf of [module, core]) {
+		assert.equal(wf.jobs.bundle.outputs.sha256, '${{ steps.bundle.outputs.sha256 }}');
+		assert.ok(wf.jobs.lint.needs.includes('bundle'));
+		const step = wf.jobs.lint.steps.find((s) => s.uses === './.release/.github/actions/lint');
+		assert.equal(step.with['bundle-sha256'], '${{ needs.bundle.outputs.sha256 }}');
+	}
+	const unpack = actions['.github/actions/lint/action.yml'].runs.steps.find((s) => s.name === 'Unpack the bundle');
+	assert.equal(unpack.env.SHA256, '${{ inputs.bundle-sha256 }}');
+	assert.match(unpack.run, /sha256sum "\$RUNNER_TEMP\/release\/\$NAME\.tar\.gz"[\s\S]*\[ "\$actual" != "\$SHA256" \][\s\S]*exit 1[\s\S]*tar -xzf/);
+});
+
 test('every variable a publish job reads is checked first, by name', () => {
 	for (const wf of [module, core]) {
 		for (const job of ['publish', 'publish-staging']) {

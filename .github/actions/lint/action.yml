@@ -10,6 +10,9 @@ inputs:
   name:
     description: The stack's name.
     required: true
+  bundle-sha256:
+    description: The bundle's sha256 as the bundle job reported it (a job output).
+    required: true
   agent-commit:
     description: The agent repo commit to build zutun-agent from (a full SHA).
     required: true
@@ -44,11 +47,19 @@ runs:
         name: release-build
         path: ${{ runner.temp }}/release
 
+    # Lint the bundle the bundle job packed, nothing else: any job of the caller's workflow can
+    # upload an artifact, but none can change the bundle job's output.
     - name: Unpack the bundle
       shell: bash
       env:
         NAME: ${{ inputs.name }}
+        SHA256: ${{ inputs.bundle-sha256 }}
       run: |
+        actual=$(sha256sum "$RUNNER_TEMP/release/$NAME.tar.gz" | cut -d' ' -f1)
+        if ! printf '%s' "$SHA256" | grep -Eqx '[0-9a-f]{64}' || [ "$actual" != "$SHA256" ]; then
+          echo "::error::$NAME.tar.gz isn't the bundle the bundle job packed (sha256 $actual, reported \"$SHA256\"); nothing is linted or signed"
+          exit 1
+        fi
         mkdir "$RUNNER_TEMP/bundle"
         tar -xzf "$RUNNER_TEMP/release/$NAME.tar.gz" -C "$RUNNER_TEMP/bundle"
 

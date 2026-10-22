@@ -116,8 +116,9 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-    # The publish jobs sign only the release.json this job wrote, whatever the artifact holds.
+    # Lint and the publish jobs check the artifact against these, whatever it holds by then.
     outputs:
+      sha256: ${{ steps.bundle.outputs.sha256 }}
       release-sha256: ${{ steps.bundle.outputs.release-sha256 }}
     steps:
       - name: Check out the module
@@ -166,6 +167,7 @@ jobs:
         uses: ./.release/.github/actions/lint
         with:
           name: ${{ needs.plan.outputs.name }}
+          bundle-sha256: ${{ needs.bundle.outputs.sha256 }}
           agent-commit: ${{ inputs.agent-commit }}
           app-client-id: ${{ secrets.PLATFORM_APP_CLIENT_ID }}
           app-private-key: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
