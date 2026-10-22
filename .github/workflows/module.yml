@@ -24,7 +24,7 @@ on:
           core.yml and in scripts/lib/lint.mjs when an agent release changes lint. Callers
           leave it alone: a release refuses any other value (architecture §8, B-74).
         type: string
-        default: 566858c4be2939dbc4ef3b38b862b1c0a4d43b0f
+        default: f0a1db1d7e63ee8670a36262001628a65503bca9
     secrets:
       PLATFORM_APP_CLIENT_ID:
         description: The organisation's GitHub App, which may read the private agent repo.
