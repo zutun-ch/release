@@ -34,6 +34,8 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  # "Run workflow" in the Actions tab: on main it builds and checks, on a tag v<N> it releases.
+  workflow_dispatch:
 
 permissions: {}
 
@@ -42,14 +44,18 @@ jobs:
     # @main on purpose: the KMS trust policy and the control plane accept only
     # the release workflow on the protected main branch.
     uses: zutun-ch/release/.github/workflows/module.yml@main
+    # What the called jobs declare, no more: a caller can't grant less.
     permissions:
       contents: read
       packages: write
       id-token: write
-    secrets: inherit
+    # Only the GitHub App that may read the agent repo, never `secrets: inherit`.
+    secrets:
+      PLATFORM_APP_CLIENT_ID: ${{ secrets.PLATFORM_APP_CLIENT_ID }}
+      PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
 ```
 
-`agent`, `caddy` and `host` use the same caller with `core.yml`. To release, tag the commit on `main`: `git tag -a v12 -m "What changed" && git push origin v12`. The tag's message becomes the release notes.
+`caddy` and `host` use the same caller with `core.yml`, and so will `agent`, without the `secrets:` block: its release builds no stack and runs no lint. The reference module `example`, from `module-example`, is released to staging only (architecture §9): its run stops before the production publish job. To release, tag the commit on `main`: `git tag -a v12 -m "What changed" && git push origin v12`. The tag's message becomes the release notes.
 
 ## What a release repo looks like
 
@@ -120,6 +126,7 @@ The lint job builds `zutun-agent` from the agent repo at the `agent-commit` defa
 | Message | Meaning |
 |---|---|
 | `module.yml releases repositories named module-<name>` | the caller's repository isn't a module repo, or calls the wrong workflow |
+| `… to staging only (architecture §9)` | not an error: the reference module never gets a production signature |
 | `tag "…" isn't a release tag` | tags are `v<N>`: `v12`, not `v1.2.0` or `v012` |
 | `… carries the placeholder digest, but this repo builds …` / `… is built, but compose.yaml has no …` | `compose.yaml` and the image layout disagree |
 | `… isn't public` | make the package public once (docs/github-setup.md, "Packages") and re-run |

@@ -13,7 +13,7 @@ The release pipeline: the reusable workflows `module.yml` (module repos `<owner>
 
 ## Contracts
 
-- **Name from the repository, never an input.** `module-<name>` → stack `<name>`; `agent` → agent builds `zutun-agent-linux-{amd64,arm64}`; `caddy` → stack `ingress`; `host` → stack `host` (`scripts/lib/identity.mjs`, mirroring the control plane's `registry.ts`).
+- **Name from the repository, never an input.** `module-<name>` → stack `<name>`; `agent` → agent builds `zutun-agent-linux-{amd64,arm64}`; `caddy` → stack `ingress`; `host` → stack `host` (`scripts/lib/identity.mjs`, mirroring the control plane's `registry.ts`). The reference module `example` is staging-only (architecture §9): the plan's `production` output is false and module.yml's production publish job doesn't run.
 - **Version from the tag** `v<N>`, N a positive integer without leading zeros (the control plane compares `ref` with `refs/tags/v<version>` exactly). Other refs build and check only; a malformed `v…` tag fails.
 - **Key id = `<KMS crypto key>-<version>`**, derived from the `ZUTUN_KMS_*` variable; the workflow fixes the family (`release-modules`, `release-core`, `staging`) and the scope check of PROTOCOL §6.3 runs before KMS is asked.
 - **Same bytes signed everywhere:** the bundle is built once, handed on as the artifact `release-build` with `release.json`, re-hashed before signing, signed for staging and production.

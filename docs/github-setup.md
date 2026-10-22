@@ -40,7 +40,7 @@ gh repo edit "$GITHUB_ORG/release" --visibility public --accept-visibility-chang
 
 ### Secrets for the agent checkout
 
-The lint job builds `zutun-agent` from the private agent repo with the organisation's GitHub App, the same one the repos' CI uses to read the platform repo. Install the App on the `agent` repo too (contents: read), and make the organisation secrets `PLATFORM_APP_CLIENT_ID` and `PLATFORM_APP_PRIVATE_KEY` available to every module repo and to `caddy` and `host`. Callers pass them with `secrets: inherit`.
+The lint job builds `zutun-agent` from the private agent repo with the organisation's GitHub App, the same one the repos' CI uses to read the platform repo. Install the App on the `agent` repo too (contents: read), and make the organisation secrets `PLATFORM_APP_CLIENT_ID` and `PLATFORM_APP_PRIVATE_KEY` available to every module repo and to `caddy` and `host`. Callers pass exactly these two under `secrets:`, never `secrets: inherit`, so no other secret of the repo reaches the pipeline.
 
 ### Rulesets
 

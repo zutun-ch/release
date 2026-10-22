@@ -34,7 +34,7 @@ runs:
           exit 1
         fi
         if [ "$HAS_APP" != true ]; then
-          echo "::error::The secrets PLATFORM_APP_CLIENT_ID and PLATFORM_APP_PRIVATE_KEY don't reach this workflow: the caller passes them with 'secrets: inherit'"
+          echo "::error::The secrets PLATFORM_APP_CLIENT_ID and PLATFORM_APP_PRIVATE_KEY don't reach this workflow: the organisation shares them with this repo, and its release.yml passes both under 'secrets:'"
           exit 1
         fi
 
