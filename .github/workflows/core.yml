@@ -19,7 +19,8 @@ on:
       agent-commit:
         description: >
           The agent commit whose `zutun-agent lint` checks a stack bundle. Kept equal to the
-          default in module.yml; callers leave it alone.
+          default in module.yml and scripts/lib/lint.mjs. Callers leave it alone: a release
+          refuses any other value (architecture §8, B-74).
         type: string
         default: 566858c4be2939dbc4ef3b38b862b1c0a4d43b0f
     secrets:
@@ -70,6 +71,9 @@ jobs:
       # What the repository releases, from its name; the version from the tag, on a commit on main.
       - name: Plan
         id: plan
+        # A release refuses any agent-commit but the default (scripts/lib/lint.mjs).
+        env:
+          AGENT_COMMIT: ${{ inputs.agent-commit }}
         run: node .release/scripts/plan.mjs --workflow core
 
   images:

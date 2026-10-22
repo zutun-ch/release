@@ -13,7 +13,7 @@ A push to `main` builds and checks everything and stops there. A tag `v<N>` rele
 
 | Job | Does | Permissions |
 |---|---|---|
-| Plan | the name from the repository (never from an input), the version from the tag, the images from the repo's layout | read |
+| Plan | the name from the repository (never from an input), the version from the tag, the images from the repo's layout; a release refuses an `agent-commit` other than the pinned one | read |
 | Images | builds each image for `linux/amd64` and `linux/arm64`; for a release pushes it to `ghcr.io/<owner>/<image>:v<N>` and stops unless every package is public | read, packages write |
 | Bundle | writes the version into `manifest.yaml` and the pushed digests into `compose.yaml` (in the bundle only), checks PROTOCOL §6.5, packs the bundle deterministically | read |
 | zutun-agent lint | checks the bundle is the one the bundle job packed, unpacks it and runs `zutun-agent lint`, built from the agent repo at a pinned commit | read |
@@ -119,7 +119,9 @@ CI also runs actionlint (the official image, pinned by digest) and ShellCheck.
 
 ### The agent commit for lint
 
-The lint job builds `zutun-agent` from the agent repo at the `agent-commit` default of `module.yml` and `core.yml` (a test keeps the two equal). When an agent release changes `zutun-agent lint`, raise both defaults to that release's commit. If the pinned agent doesn't offer `lint` as the pipeline calls it, the lint job fails and says so.
+The lint job builds `zutun-agent` from the agent repo at the commit this repo pins: `AGENT_COMMIT` in `scripts/lib/lint.mjs`, which is also the `agent-commit` default of `module.yml` and `core.yml` (a test keeps the three equal). When an agent release changes `zutun-agent lint`, raise all three to that release's commit. If the pinned agent doesn't offer `lint` as the pipeline calls it, the lint job fails and says so.
+
+Callers don't pass `agent-commit`. The check only means something if every release is held to the same rules, and an older agent's lint predates the compose rules added since (architecture §8, review B-74). So a release (a `v<N>` tag) refuses any other value at Plan, before anything is built. A push to `main` may try another agent's lint, for instance a newer one before the pin is raised; the plan notes that a release would refuse it.
 
 ## When a release stops
 
@@ -128,6 +130,7 @@ The lint job builds `zutun-agent` from the agent repo at the `agent-commit` defa
 | `module.yml releases repositories named module-<name>` | the caller's repository isn't a module repo, or calls the wrong workflow |
 | `… to staging only (architecture §9)` | not an error: the reference module never gets a production signature |
 | `tag "…" isn't a release tag` | tags are `v<N>`: `v12`, not `v1.2.0` or `v012` |
+| `agent-commit is "…", but a release is linted by the agent this workflow pins` | remove `agent-commit` from the caller's `release.yml` ("The agent commit for lint") |
 | `… carries the placeholder digest, but this repo builds …` / `… is built, but compose.yaml has no …` | `compose.yaml` and the image layout disagree |
 | `… isn't public` | make the package public once (docs/github-setup.md, "Packages") and re-run |
 | `zutun-agent lint: …` findings | the compose policy or the manifest schema, one annotation per finding |

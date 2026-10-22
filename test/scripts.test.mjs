@@ -8,6 +8,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { gunzipSync } from 'node:zlib';
 import { PLACEHOLDER_DIGEST } from '../scripts/lib/compose.mjs';
+import { AGENT_COMMIT } from '../scripts/lib/lint.mjs';
 import { repo, scratch } from './helpers.mjs';
 
 const COMMIT = 'abcdef0123456789abcdef0123456789abcdef01';
@@ -25,6 +26,8 @@ function runScript(script, args, { cwd, env = {} } = {}) {
 			GITHUB_OUTPUT: path.join(out, 'output.txt'),
 			GITHUB_STEP_SUMMARY: path.join(out, 'summary.md'),
 			GITHUB_SHA: COMMIT,
+			// As the workflows pass it when the caller leaves agent-commit alone.
+			AGENT_COMMIT,
 			...env,
 		},
 	});
@@ -134,6 +137,24 @@ test('plan.mjs: a tag is refused when the checkout has no origin/main to compare
 	assert.match(r.stderr, /origin\/main isn't in the checkout; the plan job checks the repository out with fetch-depth: 0/);
 });
 
+test("plan.mjs: a release refuses a caller's agent-commit; a check only notes it", () => {
+	const dir = moduleRepo();
+	const { main } = asCheckout(dir);
+	const older = '0123456789abcdef0123456789abcdef01234567';
+	const env = { GITHUB_REPOSITORY: 'zutun-ch/module-mail', GITHUB_SHA: main };
+	for (const agent of [older, '', undefined]) {
+		const r = runScript('plan.mjs', ['--workflow', 'module'], { cwd: dir, env: { ...env, GITHUB_REF: 'refs/tags/v7', AGENT_COMMIT: agent } });
+		assert.equal(r.status, 1, `agent-commit ${agent}`);
+		assert.match(r.stderr, new RegExp(`^::error::agent-commit is "${agent ?? ''}", but a release is linted by the agent this workflow pins \\(${AGENT_COMMIT}\\)`));
+		assert.match(r.stderr, /Remove agent-commit from the caller's release.yml/);
+		assert.deepEqual(r.outputs, {});
+	}
+	const check = runScript('plan.mjs', ['--workflow', 'module'], { cwd: dir, env: { ...env, GITHUB_REF: 'refs/heads/main', AGENT_COMMIT: older } });
+	assert.equal(check.status, 0, check.stderr);
+	assert.equal(check.outputs.publish, 'false');
+	assert.match(check.stdout, new RegExp(`::notice::lint uses the agent at ${older}, not the pinned ${AGENT_COMMIT}: fine for a check, but a release would refuse it`));
+});
+
 test('stack-bundle.mjs: a release sets the version and pins digests in the bundle, not in the checkout', () => {
 	const dir = moduleRepo();
 	const before = readFileSync(path.join(dir, 'compose.yaml'), 'utf8');
@@ -210,6 +231,6 @@ test('lint-bundle.sh turns each finding into an error annotation', () => {
 test('lint-bundle.sh: a usage error means the pinned agent has no lint yet', () => {
 	const r = runScript('lint-bundle.sh', [fakeAgent(2), 'mail', '/tmp/b']);
 	assert.equal(r.status, 1);
-	assert.match(r.stdout, /usage error \(exit 2\).*raise the agent-commit input/);
+	assert.match(r.stdout, /usage error \(exit 2\).*raise the release repo's pinned agent commit/);
 	assert.match(runScript('lint-bundle.sh', [fakeAgent(3), 'mail', '/tmp/b']).stdout, /exit code 3/);
 });

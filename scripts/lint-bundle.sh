@@ -38,7 +38,7 @@ case $status in
 	exit 1
 	;;
 2)
-	printf '::error title=zutun-agent lint::%s\n' "zutun-agent refused the call as a usage error (exit 2). The agent at the pinned commit may not offer 'lint --kind stack --name <name> <dir>' yet: raise the agent-commit input of the release workflow to an agent commit that does."
+	printf '::error title=zutun-agent lint::%s\n' "zutun-agent refused the call as a usage error (exit 2). The agent at the pinned commit may not offer 'lint --kind stack --name <name> <dir>' yet: raise the release repo's pinned agent commit to one that does (its README, 'The agent commit for lint')."
 	exit 1
 	;;
 *)

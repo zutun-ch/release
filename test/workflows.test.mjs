@@ -5,6 +5,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { parseYaml } from './lib/yaml.mjs';
+import { AGENT_COMMIT } from '../scripts/lib/lint.mjs';
 import { repo } from './helpers.mjs';
 
 const read = (rel) => readFileSync(path.join(repo, rel), 'utf8');
@@ -222,11 +223,19 @@ test('composite run steps declare their shell and reach scripts relative to the 
 	}
 });
 
-test('both workflows build lint from the same agent commit, a full SHA', () => {
-	const a = module.on.workflow_call.inputs['agent-commit'].default;
-	const b = core.on.workflow_call.inputs['agent-commit'].default;
-	assert.match(a, /^[0-9a-f]{40}$/);
-	assert.equal(a, b);
+test('both workflows build lint from the pinned agent commit, a full SHA', () => {
+	assert.match(AGENT_COMMIT, /^[0-9a-f]{40}$/);
+	for (const wf of [module, core]) assert.equal(wf.on.workflow_call.inputs['agent-commit'].default, AGENT_COMMIT, wf.name);
+});
+
+test("both workflows hand the plan the caller's agent-commit, so a release can refuse another", () => {
+	for (const wf of [module, core]) {
+		const plan = wf.jobs.plan.steps.find((s) => s.id === 'plan');
+		assert.equal(plan.env?.AGENT_COMMIT, '${{ inputs.agent-commit }}', wf.name);
+		// Lint builds from the same input the plan checked.
+		const lint = wf.jobs.lint.steps.find((s) => s.uses === './.release/.github/actions/lint');
+		assert.equal(lint.with['agent-commit'], '${{ inputs.agent-commit }}', wf.name);
+	}
 });
 
 test("module.yml and core.yml share their jobs' shape: same steps apart from the agent build", () => {
