@@ -53,6 +53,16 @@ test('third-party actions are pinned by full commit SHA with the version in a co
 	}
 });
 
+test('the images that build the images are pinned by digest and never come from the cache', () => {
+	const steps = actions['.github/actions/images/action.yml'].runs.steps;
+	const qemu = steps.find((s) => s.uses?.startsWith('docker/setup-qemu-action@'));
+	assert.match(qemu.with?.image ?? '', /^docker\.io\/tonistiigi\/binfmt:qemu-v[\d.]+@sha256:[0-9a-f]{64}$/);
+	assert.equal(qemu.with['cache-image'], 'false');
+	assert.equal(qemu.with.platforms, 'arm64');
+	const buildx = steps.find((s) => s.uses?.startsWith('docker/setup-buildx-action@'));
+	assert.match(buildx.with?.['driver-opts'] ?? '', /^image=moby\/buildkit:v[\d.]+@sha256:[0-9a-f]{64}$/);
+});
+
 test('one version of each third-party action across all files', () => {
 	const pins = new Map();
 	for (const s of allSteps()) {

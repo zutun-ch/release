@@ -44,5 +44,6 @@ The release pipeline: the reusable workflows `module.yml` (module repos `<owner>
 
 - Conventional Commits.
 - Third-party actions pinned by full commit SHA with `# vX.Y.Z`; one version per action across all files (a test checks both).
+- The images the image build runs on are pinned by digest in `.github/actions/images`: binfmt (QEMU, `cache-image: false`) and BuildKit (`driver-opts`). Dependabot doesn't see them; bump both by hand with the digest of the release tag's index.
 - No `${{ }}` inside `run:`: values go through `env`. `permissions` on every job, `id-token: write` only in the publish jobs, `packages: write` only in the images job.
 - No deployment values (domains, regions, project or key names, the organisation) in workflows or scripts; they come from variables or `github.repository_owner`. The docs name zutun's values as examples.
