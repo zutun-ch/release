@@ -1,0 +1,60 @@
+# Builds the images of a release repo for linux/amd64 and linux/arm64 (MANIFEST §10). For a
+# release it pushes them to ghcr.io, tagged v<N>, and checks that each package is public
+# before anything is signed: servers pull without credentials. On other refs it only builds.
+# The scripts live next to this action, in the release tooling the workflow checked out.
+name: Images
+description: Build (and for a release push) the images of the repo in the workspace.
+
+inputs:
+  images:
+    description: The plan's images, JSON [{ name, context, repository }].
+    required: true
+  version:
+    description: The release version; empty builds without pushing.
+    required: true
+  token:
+    description: A token that may push the packages (the job's GITHUB_TOKEN with packages write).
+    required: true
+
+outputs:
+  digests:
+    description: JSON map of image repository to its pushed digest (null when nothing was pushed).
+    value: ${{ steps.build.outputs.digests }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 24
+
+    # QEMU runs the build steps of the other architecture; buildx builds both into one index.
+    - name: Set up QEMU
+      if: inputs.images != '[]'
+      uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+    - name: Set up Docker Buildx
+      if: inputs.images != '[]'
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+    - name: Log in to ghcr.io
+      if: inputs.images != '[]' && inputs.version != ''
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.token }}
+        ACTOR: ${{ github.actor }}
+      run: printf '%s' "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+
+    - name: Build
+      id: build
+      shell: bash
+      env:
+        IMAGES: ${{ inputs.images }}
+        VERSION: ${{ inputs.version }}
+      run: node "$GITHUB_ACTION_PATH/../../../scripts/build-images.mjs" --images "$IMAGES" --version "$VERSION"
+
+    - name: Check the packages are public
+      if: inputs.images != '[]' && inputs.version != ''
+      shell: bash
+      env:
+        DIGESTS: ${{ steps.build.outputs.digests }}
+      run: node "$GITHUB_ACTION_PATH/../../../scripts/check-public.mjs" --digests "$DIGESTS"

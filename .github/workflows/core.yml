@@ -1,0 +1,296 @@
+# The release pipeline of the platform's own repositories (architecture §8), signed with
+# release-core: the agent (<owner>/agent), the host stack (<owner>/host) and the ingress stack
+# (<owner>/caddy). Called by each from a short caller (README, "Calling the pipeline").
+#
+#   stacks: plan ── images ── bundle ── lint ──┬── publish-staging (only when configured)
+#   agent:  plan ── agent ─────────────────────┴── publish (environment "release", approval)
+#
+# A push to main builds and checks without pushing, signing or uploading. A tag v<N> releases
+# version N; for the agent, N is the build number of both zutun-agent-linux-amd64 and -arm64.
+# The jobs are the same as module.yml's, with the key and the agent build being the
+# differences. They can't be shared through a nested workflow: the KMS trust policy and the
+# control plane tell core from module releases by the token's job_workflow_ref, which names
+# the workflow file that defines the job.
+name: Core release
+
+on:
+  workflow_call:
+    inputs:
+      agent-commit:
+        description: >
+          The agent commit whose `zutun-agent lint` checks a stack bundle. Kept equal to the
+          default in module.yml; callers leave it alone.
+        type: string
+        default: 566858c4be2939dbc4ef3b38b862b1c0a4d43b0f
+    secrets:
+      PLATFORM_APP_CLIENT_ID:
+        description: The organisation's GitHub App, which may read the private agent repo (stacks only).
+        required: false
+      PLATFORM_APP_PRIVATE_KEY:
+        description: Its private key.
+        required: false
+
+permissions: {}
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      kind: ${{ steps.plan.outputs.kind }}
+      name: ${{ steps.plan.outputs.name }}
+      version: ${{ steps.plan.outputs.version }}
+      publish: ${{ steps.plan.outputs.publish }}
+      images: ${{ steps.plan.outputs.images }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out the release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release
+          persist-credentials: false
+      # The tooling must be this workflow's own commit, never the caller's repository.
+      - name: Check the tooling commit
+        env:
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: test -n "$WORKFLOW_SHA" && test "$(git -C .release rev-parse HEAD)" = "$WORKFLOW_SHA"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      # What the repository releases, from its name; the version from the tag.
+      - name: Plan
+        id: plan
+        run: node .release/scripts/plan.mjs --workflow core
+
+  images:
+    name: Images
+    needs: plan
+    if: needs.plan.outputs.kind == 'stack'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digests: ${{ steps.images.outputs.digests }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out the release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release
+          persist-credentials: false
+      - name: Check the tooling commit
+        env:
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: test -n "$WORKFLOW_SHA" && test "$(git -C .release rev-parse HEAD)" = "$WORKFLOW_SHA"
+      - name: Images
+        id: images
+        uses: ./.release/.github/actions/images
+        with:
+          images: ${{ needs.plan.outputs.images }}
+          version: ${{ needs.plan.outputs.version }}
+          token: ${{ github.token }}
+
+  bundle:
+    name: Bundle
+    needs: [plan, images]
+    if: needs.plan.outputs.kind == 'stack'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out the release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release
+          persist-credentials: false
+      - name: Check the tooling commit
+        env:
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: test -n "$WORKFLOW_SHA" && test "$(git -C .release rev-parse HEAD)" = "$WORKFLOW_SHA"
+      - name: Bundle
+        uses: ./.release/.github/actions/stack-bundle
+        with:
+          name: ${{ needs.plan.outputs.name }}
+          version: ${{ needs.plan.outputs.version }}
+          digests: ${{ needs.images.outputs.digests }}
+
+  lint:
+    name: zutun-agent lint
+    needs: [plan, bundle]
+    if: needs.plan.outputs.kind == 'stack'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release
+          persist-credentials: false
+      - name: Check the tooling commit
+        env:
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: test -n "$WORKFLOW_SHA" && test "$(git -C .release rev-parse HEAD)" = "$WORKFLOW_SHA"
+      - name: Lint
+        uses: ./.release/.github/actions/lint
+        with:
+          name: ${{ needs.plan.outputs.name }}
+          agent-commit: ${{ inputs.agent-commit }}
+          app-client-id: ${{ secrets.PLATFORM_APP_CLIENT_ID }}
+          app-private-key: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
+
+  # The production agent (architecture §9: -tags prod embeds the release keys, never the
+  # staging key), cross-compiled for both architectures in one job.
+  agent:
+    name: Agent builds
+    needs: plan
+    if: needs.plan.outputs.kind == 'agent'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the agent
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out the release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release
+          persist-credentials: false
+      - name: Check the tooling commit
+        env:
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: test -n "$WORKFLOW_SHA" && test "$(git -C .release rev-parse HEAD)" = "$WORKFLOW_SHA"
+      # No module cache: a release build never reads state an earlier run could have written.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Build linux/amd64 and linux/arm64
+        env:
+          BUILD: ${{ needs.plan.outputs.version }}
+        run: sh .release/scripts/build-agent.sh "$RUNNER_TEMP/release" "$BUILD"
+      - name: Describe the release
+        env:
+          BUILD: ${{ needs.plan.outputs.version }}
+        run: node .release/scripts/agent-release.mjs --dir "$RUNNER_TEMP/release" --version "$BUILD"
+      - name: Hand the builds on
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-build
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+          retention-days: 30
+
+  # Staging first (architecture §8, step 5), without approval. Runs only once the staging
+  # variables exist; until there is a staging control plane it is skipped.
+  publish-staging:
+    name: Publish to staging
+    needs: [plan, lint, agent]
+    if: ${{ !cancelled() && !failure() && needs.plan.outputs.publish == 'true' && vars.ZUTUN_STAGING_CONTROL_PLANE_ORIGIN != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: zutun-publish-staging-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      ZUTUN_STAGING_CONTROL_PLANE_ORIGIN: ${{ vars.ZUTUN_STAGING_CONTROL_PLANE_ORIGIN }}
+      ZUTUN_STAGING_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.ZUTUN_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
+      ZUTUN_KMS_STAGING: ${{ vars.ZUTUN_KMS_STAGING }}
+    steps:
+      - name: Check out the release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release
+          persist-credentials: false
+      - name: Check the tooling commit
+        env:
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: test -n "$WORKFLOW_SHA" && test "$(git -C .release rev-parse HEAD)" = "$WORKFLOW_SHA"
+      - name: Check the staging variables
+        run: node .release/scripts/require-vars.mjs ZUTUN_STAGING_CONTROL_PLANE_ORIGIN ZUTUN_STAGING_WORKLOAD_IDENTITY_PROVIDER ZUTUN_KMS_STAGING
+      - name: Publish
+        uses: ./.release/.github/actions/publish
+        with:
+          control-plane-origin: ${{ env.ZUTUN_STAGING_CONTROL_PLANE_ORIGIN }}
+          workload-identity-provider: ${{ env.ZUTUN_STAGING_WORKLOAD_IDENTITY_PROVIDER }}
+          kms-key-version: ${{ env.ZUTUN_KMS_STAGING }}
+          key-family: staging
+
+  # Production (architecture §8, step 6): the job waits for a required reviewer of the repo's
+  # "release" environment, which allows v* tags only. Releases of one repo never overlap.
+  publish:
+    name: Publish
+    needs: [plan, lint, agent, publish-staging]
+    if: ${{ !cancelled() && !failure() && needs.plan.outputs.publish == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: zutun-publish-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      ZUTUN_CONTROL_PLANE_ORIGIN: ${{ vars.ZUTUN_CONTROL_PLANE_ORIGIN }}
+      ZUTUN_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.ZUTUN_WORKLOAD_IDENTITY_PROVIDER }}
+      ZUTUN_KMS_RELEASE_CORE: ${{ vars.ZUTUN_KMS_RELEASE_CORE }}
+    steps:
+      - name: Check out the release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release
+          persist-credentials: false
+      - name: Check the tooling commit
+        env:
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: test -n "$WORKFLOW_SHA" && test "$(git -C .release rev-parse HEAD)" = "$WORKFLOW_SHA"
+      - name: Check the release variables
+        run: node .release/scripts/require-vars.mjs ZUTUN_CONTROL_PLANE_ORIGIN ZUTUN_WORKLOAD_IDENTITY_PROVIDER ZUTUN_KMS_RELEASE_CORE
+      - name: Publish
+        uses: ./.release/.github/actions/publish
+        with:
+          control-plane-origin: ${{ env.ZUTUN_CONTROL_PLANE_ORIGIN }}
+          workload-identity-provider: ${{ env.ZUTUN_WORKLOAD_IDENTITY_PROVIDER }}
+          kms-key-version: ${{ env.ZUTUN_KMS_RELEASE_CORE }}
+          key-family: release-core

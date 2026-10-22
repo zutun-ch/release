@@ -1,0 +1,54 @@
+# Signs the release the build jobs handed on ("release-build") with a Cloud KMS key and uploads
+# it to a control plane (scripts/publish.mjs). The Google token comes from GitHub OIDC through
+# Workload Identity Federation; no Google credential is stored anywhere. Nothing from the
+# repository being released runs here: only this tooling and the artifact, which is checked
+# against release.json before it is signed.
+name: Publish
+description: Sign with Cloud KMS, verify, and upload in the three steps of CONTROL-PLANE §7.
+
+inputs:
+  control-plane-origin:
+    description: https://<host> of the control plane's admin app.
+    required: true
+  workload-identity-provider:
+    description: projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>
+    required: true
+  kms-key-version:
+    description: projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<key>/cryptoKeyVersions/<n>
+    required: true
+  key-family:
+    description: The key this workflow signs with: release-modules, release-core or staging.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 24
+
+    - name: Fetch the release
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: release-build
+        path: ${{ runner.temp }}/release
+
+    # Direct Workload Identity Federation: the federated token is granted the key itself.
+    # No credentials file is written and no environment variable exported.
+    - name: Google Cloud token
+      id: google
+      uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+      with:
+        workload_identity_provider: ${{ inputs.workload-identity-provider }}
+        create_credentials_file: false
+        export_environment_variables: false
+
+    - name: Sign and upload
+      shell: bash
+      env:
+        RELEASE_DIR: ${{ runner.temp }}/release
+        CONTROL_PLANE_ORIGIN: ${{ inputs.control-plane-origin }}
+        KMS_KEY_VERSION: ${{ inputs.kms-key-version }}
+        KEY_FAMILY: ${{ inputs.key-family }}
+        GOOGLE_TOKEN: ${{ steps.google.outputs.auth_token }}
+      run: node "$GITHUB_ACTION_PATH/../../../scripts/publish.mjs"

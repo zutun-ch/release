@@ -1,0 +1,89 @@
+# Runs `zutun-agent lint` on the packed bundle, unpacked, so the pipeline and the agent share
+# one implementation of the manifest schema and the compose policy (MANIFEST §9). The agent is
+# built from the agent repo (<owner>/agent) at a pinned commit, with -tags staging (the lint doesn't depend on
+# the trust anchors). That repo is private: the organisation's GitHub App issues a read-only
+# token for it, revoked when the job ends.
+name: Lint
+description: Check the bundle with zutun-agent lint.
+
+inputs:
+  name:
+    description: The stack's name.
+    required: true
+  agent-commit:
+    description: The agent repo commit to build zutun-agent from (a full SHA).
+    required: true
+  app-client-id:
+    description: The client id of the organisation's GitHub App.
+    required: true
+  app-private-key:
+    description: The private key of the organisation's GitHub App.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Check the inputs
+      shell: bash
+      env:
+        AGENT_COMMIT: ${{ inputs.agent-commit }}
+        HAS_APP: ${{ inputs.app-client-id != '' && inputs.app-private-key != '' }}
+      run: |
+        if ! printf '%s' "$AGENT_COMMIT" | grep -Eqx '[0-9a-f]{40}'; then
+          echo "::error::agent-commit must be a full commit SHA of the agent repo, not \"$AGENT_COMMIT\""
+          exit 1
+        fi
+        if [ "$HAS_APP" != true ]; then
+          echo "::error::The secrets PLATFORM_APP_CLIENT_ID and PLATFORM_APP_PRIVATE_KEY don't reach this workflow: the caller passes them with 'secrets: inherit'"
+          exit 1
+        fi
+
+    - name: Fetch the bundle
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: release-build
+        path: ${{ runner.temp }}/release
+
+    - name: Unpack the bundle
+      shell: bash
+      env:
+        NAME: ${{ inputs.name }}
+      run: |
+        mkdir "$RUNNER_TEMP/bundle"
+        tar -xzf "$RUNNER_TEMP/release/$NAME.tar.gz" -C "$RUNNER_TEMP/bundle"
+
+    - name: Token for the agent repo
+      id: agent-token
+      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      with:
+        client-id: ${{ inputs.app-client-id }}
+        private-key: ${{ inputs.app-private-key }}
+        owner: ${{ github.repository_owner }}
+        repositories: agent
+        permission-contents: read
+
+    - name: Check out the agent
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: ${{ github.repository_owner }}/agent
+        ref: ${{ inputs.agent-commit }}
+        path: .agent
+        token: ${{ steps.agent-token.outputs.token }}
+        persist-credentials: false
+
+    # No module cache: a release build never reads state an earlier run could have written.
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: .agent/go.mod
+        cache: false
+
+    - name: Build zutun-agent
+      shell: bash
+      working-directory: .agent
+      run: go build -tags staging -o "$RUNNER_TEMP/zutun-agent" ./cmd/zutun-agent
+
+    - name: zutun-agent lint
+      shell: bash
+      env:
+        NAME: ${{ inputs.name }}
+      run: sh "$GITHUB_ACTION_PATH/../../../scripts/lint-bundle.sh" "$RUNNER_TEMP/zutun-agent" "$NAME" "$RUNNER_TEMP/bundle"

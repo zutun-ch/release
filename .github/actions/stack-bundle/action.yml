@@ -1,0 +1,48 @@
+# Packs the stack bundle of the repo in the workspace (PROTOCOL §6.5): for a release with the
+# version from the tag in manifest.yaml and the pushed digests in compose.yaml, deterministically,
+# so the same commit yields the same sha256. Hands the bundle and release.json to the later jobs
+# as the workflow artifact "release-build".
+name: Stack bundle
+description: Pack the stack bundle and hand it to the lint and publish jobs.
+
+inputs:
+  name:
+    description: The stack's name.
+    required: true
+  version:
+    description: The release version; empty keeps manifest.yaml's version and the placeholder digests.
+    required: true
+  digests:
+    description: JSON map of image repository to pushed digest, from the images job.
+    required: true
+
+outputs:
+  sha256:
+    description: The bundle's sha256.
+    value: ${{ steps.pack.outputs.sha256 }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 24
+
+    - name: Pack
+      id: pack
+      shell: bash
+      env:
+        NAME: ${{ inputs.name }}
+        VERSION: ${{ inputs.version }}
+        DIGESTS: ${{ inputs.digests }}
+      run: >
+        node "$GITHUB_ACTION_PATH/../../../scripts/stack-bundle.mjs"
+        --name "$NAME" --version "$VERSION" --digests "$DIGESTS" --out "$RUNNER_TEMP/release"
+
+    - name: Hand the bundle on
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: release-build
+        path: ${{ runner.temp }}/release
+        if-no-files-found: error
+        retention-days: 30
