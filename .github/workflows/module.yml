@@ -45,6 +45,7 @@ jobs:
       name: ${{ steps.plan.outputs.name }}
       version: ${{ steps.plan.outputs.version }}
       publish: ${{ steps.plan.outputs.publish }}
+      production: ${{ steps.plan.outputs.production }}
       images: ${{ steps.plan.outputs.images }}
     steps:
       - name: Check out the module
@@ -204,10 +205,11 @@ jobs:
 
   # Production (architecture §8, step 6): the job waits for a required reviewer of the repo's
   # "release" environment, which allows v* tags only. Releases of one module never overlap.
+  # A module released to staging only (the reference module, architecture §9) never gets here.
   publish:
     name: Publish
     needs: [plan, lint, publish-staging]
-    if: ${{ !cancelled() && !failure() && needs.plan.outputs.publish == 'true' }}
+    if: ${{ !cancelled() && !failure() && needs.plan.outputs.publish == 'true' && needs.plan.outputs.production == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: release

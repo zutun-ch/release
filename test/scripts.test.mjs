@@ -52,8 +52,25 @@ test('plan.mjs: a tag of a module repo releases its stack and lists its images',
 		name: 'mail',
 		version: '7',
 		publish: 'true',
+		production: 'true',
 		images: JSON.stringify([{ name: 'mail', context: 'image', repository: 'ghcr.io/zutun-ch/mail' }]),
 	});
+});
+
+test('plan.mjs: a tag of the reference module releases to staging only', () => {
+	const dir = scratch({
+		'manifest.yaml': 'schema: 1\nkind: stack\nname: example\nversion: 1\n',
+		'compose.yaml': `services:\n  app:\n    image: ghcr.io/zutun-ch/example@${PLACEHOLDER_DIGEST}\n`,
+		'image/Dockerfile': 'FROM scratch\n',
+	});
+	const r = runScript('plan.mjs', ['--workflow', 'module'], {
+		cwd: dir,
+		env: { GITHUB_REPOSITORY: 'zutun-ch/module-example', GITHUB_REF: 'refs/tags/v3' },
+	});
+	assert.equal(r.status, 0, r.stderr);
+	assert.equal(r.outputs.publish, 'true');
+	assert.equal(r.outputs.production, 'false');
+	assert.match(r.stdout, /staging only/);
 });
 
 test('plan.mjs: main checks only; the agent has no images; mistakes are annotations', () => {

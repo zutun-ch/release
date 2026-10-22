@@ -96,6 +96,9 @@ test('publish jobs: environment release in production, one release at a time per
 		assert.equal(wf.jobs.publish.concurrency['cancel-in-progress'], 'false');
 		assert.match(wf.jobs['publish-staging'].if, /vars\.ZUTUN_STAGING_CONTROL_PLANE_ORIGIN != ''/);
 	}
+	// Modules released to staging only (architecture §9) never reach the release key.
+	assert.match(module.jobs.publish.if, /needs\.plan\.outputs\.production == 'true'/);
+	assert.equal(module.jobs.plan.outputs.production, '${{ steps.plan.outputs.production }}');
 	assert.equal(module.jobs.publish.with?.['key-family'], undefined);
 	const family = (wf, job) => wf.jobs[job].steps.find((s) => s.uses?.endsWith('/actions/publish')).with['key-family'];
 	assert.equal(family(module, 'publish'), 'release-modules');

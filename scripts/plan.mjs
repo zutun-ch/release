@@ -2,7 +2,8 @@
 // What this run releases, from the repository, the ref and the repo's layout only:
 //   node plan.mjs --workflow module|core
 // Step outputs: kind, name, version (empty unless the ref is a v<N> tag), publish
-// ("true" for a v<N> tag), images (JSON: [{ name, context, repository }]).
+// ("true" for a v<N> tag), production ("false" for a module released to staging only),
+// images (JSON: [{ name, context, repository }]).
 
 import { notice, parseArgs, run, setOutput } from './lib/actions.mjs';
 import { releaseTarget, versionFromRef } from './lib/identity.mjs';
@@ -21,11 +22,14 @@ run(async () => {
 	setOutput('name', target.name);
 	setOutput('version', version === null ? '' : String(version));
 	setOutput('publish', String(version !== null));
+	setOutput('production', String(target.production));
 	setOutput('images', JSON.stringify(images));
 	notice(
 		version === null
 			? `${target.kind} ${target.name}: build and check only (not a v<N> tag)`
-			: `${target.kind} ${target.name} v${version}: build, sign and upload`,
+			: target.production
+				? `${target.kind} ${target.name} v${version}: build, sign and upload`
+				: `${target.kind} ${target.name} v${version}: build, sign and upload to staging only (architecture §9)`,
 	);
 	for (const i of images) console.log(`image ${i.repository} from ${i.context}/Dockerfile`);
 });

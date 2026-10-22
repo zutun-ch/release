@@ -23,11 +23,19 @@ const CORE_REPOS = {
 };
 
 /**
+ * Modules released to staging only, never signed with a release key (architecture §9): the
+ * reference module `example` carries demo and anti-pattern scripts that must never reach a
+ * production server. Software's own, like CORE_REPOS.
+ */
+const STAGING_ONLY = new Set(['example']);
+
+/**
  * The release target of `<owner>/<repo>` under a workflow:
  * - module.yml: `module-<name>` releases the stack `<name>`;
  * - core.yml: `agent`, `caddy` (the stack `ingress`) and `host`.
  * `imageBase` names the repo's images (README, "Image layout"): the repo's name without
- * `module-`, so `module-mail` pushes `mail` and `caddy` pushes `caddy`.
+ * `module-`, so `module-mail` pushes `mail` and `caddy` pushes `caddy`. `production` is false
+ * for a module that is released to staging only.
  */
 export function releaseTarget(repository, workflow) {
 	const match = /^([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)$/.exec(repository ?? '');
@@ -46,7 +54,7 @@ export function releaseTarget(repository, workflow) {
 		if (RESERVED.has(name)) {
 			throw new ReleaseError(`"${name}" is reserved for the platform and can't be a module name`);
 		}
-		return { owner, kind: 'stack', name, imageBase: name };
+		return { owner, kind: 'stack', name, imageBase: name, production: !STAGING_ONLY.has(name) };
 	}
 	if (workflow === 'core') {
 		const core = CORE_REPOS[repo];
@@ -55,7 +63,7 @@ export function releaseTarget(repository, workflow) {
 				`core.yml releases the repositories ${Object.keys(CORE_REPOS).join(', ')}; ${repository} isn't one of them`,
 			);
 		}
-		return { owner, ...core, imageBase: repo };
+		return { owner, ...core, imageBase: repo, production: true };
 	}
 	throw new ReleaseError(`unknown workflow "${workflow}" (module or core)`);
 }

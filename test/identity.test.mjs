@@ -10,8 +10,19 @@ test('module.yml: module-<name> releases the stack <name>, images named after it
 		kind: 'stack',
 		name: 'mail',
 		imageBase: 'mail',
+		production: true,
 	});
 	assert.equal(releaseTarget('acme/module-cloud-files', 'module').name, 'cloud-files');
+});
+
+test('module.yml: the reference module example goes to staging only (architecture §9)', () => {
+	assert.deepEqual(releaseTarget('zutun-ch/module-example', 'module'), {
+		owner: 'zutun-ch',
+		kind: 'stack',
+		name: 'example',
+		imageBase: 'example',
+		production: false,
+	});
 });
 
 test('module.yml refuses repos that are not module-<name>, bad names and reserved names', () => {
@@ -23,9 +34,9 @@ test('module.yml refuses repos that are not module-<name>, bad names and reserve
 });
 
 test('core.yml: agent, caddy (the stack ingress) and host, nothing else', () => {
-	assert.deepEqual(releaseTarget('zutun-ch/agent', 'core'), { owner: 'zutun-ch', kind: 'agent', name: 'agent', imageBase: 'agent' });
-	assert.deepEqual(releaseTarget('zutun-ch/caddy', 'core'), { owner: 'zutun-ch', kind: 'stack', name: 'ingress', imageBase: 'caddy' });
-	assert.deepEqual(releaseTarget('zutun-ch/host', 'core'), { owner: 'zutun-ch', kind: 'stack', name: 'host', imageBase: 'host' });
+	assert.deepEqual(releaseTarget('zutun-ch/agent', 'core'), { owner: 'zutun-ch', kind: 'agent', name: 'agent', imageBase: 'agent', production: true });
+	assert.deepEqual(releaseTarget('zutun-ch/caddy', 'core'), { owner: 'zutun-ch', kind: 'stack', name: 'ingress', imageBase: 'caddy', production: true });
+	assert.deepEqual(releaseTarget('zutun-ch/host', 'core'), { owner: 'zutun-ch', kind: 'stack', name: 'host', imageBase: 'host', production: true });
 	for (const repo of ['zutun-ch/module-mail', 'zutun-ch/ingress', 'zutun-ch/platform', 'zutun-ch/release']) {
 		assert.throws(() => releaseTarget(repo, 'core'), ReleaseError, repo);
 	}
