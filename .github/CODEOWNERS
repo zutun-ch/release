@@ -1,0 +1,2 @@
+# The release pipeline decides what gets signed: every change is reviewed by platform-core.
+*  @zutun-ch/platform-core
