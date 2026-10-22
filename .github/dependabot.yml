@@ -1,0 +1,11 @@
+# Keeps the SHA-pinned actions current, in the workflows and in the composite actions, one
+# grouped pull request a week. Bump the "# vX.Y.Z" comments with the SHAs.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/*
+    schedule: { interval: weekly }
+    groups:
+      actions: { patterns: ["*"] }

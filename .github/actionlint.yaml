@@ -1,0 +1,7 @@
+# actionlint 1.7.12 doesn't know the job context's workflow_repository and workflow_sha yet
+# (https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#job-context).
+# The release workflows use them to check out their own tooling at their own commit.
+paths:
+  .github/workflows/{module,core}.yml:
+    ignore:
+      - 'property "workflow_(repository|sha)" is not defined in object type'
