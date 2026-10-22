@@ -134,6 +134,13 @@ test('every job checks that its tooling is this workflow’s own commit before u
 	}
 });
 
+test('the plan job sees main, to check that a release tag points at a commit on it', () => {
+	for (const wf of [module, core]) {
+		const checkout = wf.jobs.plan.steps.find((s) => s.uses?.startsWith('actions/checkout@') && !s.with.path);
+		assert.equal(checkout.with['fetch-depth'], '0');
+	}
+});
+
 test('every variable a publish job reads is checked first, by name', () => {
 	for (const wf of [module, core]) {
 		for (const job of ['publish', 'publish-staging']) {

@@ -55,7 +55,7 @@ jobs:
       PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
 ```
 
-`caddy` and `host` use the same caller with `core.yml`, and so will `agent`, without the `secrets:` block: its release builds no stack and runs no lint. The reference module `example`, from `module-example`, is released to staging only (architecture §9): its run stops before the production publish job. To release, tag the commit on `main`: `git tag -a v12 -m "What changed" && git push origin v12`. The tag's message becomes the release notes.
+`caddy` and `host` use the same caller with `core.yml`, and so will `agent`, without the `secrets:` block: its release builds no stack and runs no lint. The reference module `example`, from `module-example`, is released to staging only (architecture §9): its run stops before the production publish job. To release, tag a commit on `main` (a tag on any other branch is refused at Plan): `git tag -a v12 -m "What changed" && git push origin v12`. The tag's message becomes the release notes.
 
 ## What a release repo looks like
 

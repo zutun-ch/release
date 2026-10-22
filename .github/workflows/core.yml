@@ -46,9 +46,11 @@ jobs:
       publish: ${{ steps.plan.outputs.publish }}
       images: ${{ steps.plan.outputs.images }}
     steps:
+      # All of history, so the plan can check that a release tag points at a commit on main.
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Check out the release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -65,7 +67,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      # What the repository releases, from its name; the version from the tag.
+      # What the repository releases, from its name; the version from the tag, on a commit on main.
       - name: Plan
         id: plan
         run: node .release/scripts/plan.mjs --workflow core

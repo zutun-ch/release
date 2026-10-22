@@ -2,7 +2,7 @@
 // agent-release.mjs, require-vars.mjs and lint-bundle.sh (with stand-in agents).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, readFileSync } from 'node:fs';
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { gunzipSync } from 'node:zlib';
@@ -41,10 +41,36 @@ const moduleRepo = () =>
 		'scripts/hello.sh': 'echo hello\n',
 	});
 
+/**
+ * `dir` as a git repo the way the plan job's checkout leaves it (fetch-depth: 0): its files
+ * committed on main, known as origin/main, plus a commit on a side branch that isn't on main.
+ */
+function asCheckout(dir) {
+	const git = (...args) => {
+		const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.test', '-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' });
+		assert.equal(r.status, 0, r.stderr);
+		return r.stdout.trim();
+	};
+	git('init', '--quiet', '--initial-branch=main');
+	git('add', '-A');
+	git('commit', '--quiet', '--allow-empty', '-m', 'main');
+	const main = git('rev-parse', 'HEAD');
+	git('update-ref', 'refs/remotes/origin/main', main);
+	git('checkout', '--quiet', '-b', 'side');
+	writeFileSync(path.join(dir, 'unreviewed.txt'), 'x');
+	git('add', '-A');
+	git('commit', '--quiet', '-m', 'side');
+	const side = git('rev-parse', 'HEAD');
+	git('checkout', '--quiet', main);
+	return { main, side };
+}
+
 test('plan.mjs: a tag of a module repo releases its stack and lists its images', () => {
+	const dir = moduleRepo();
+	const { main } = asCheckout(dir);
 	const r = runScript('plan.mjs', ['--workflow', 'module'], {
-		cwd: moduleRepo(),
-		env: { GITHUB_REPOSITORY: 'zutun-ch/module-mail', GITHUB_REF: 'refs/tags/v7' },
+		cwd: dir,
+		env: { GITHUB_REPOSITORY: 'zutun-ch/module-mail', GITHUB_REF: 'refs/tags/v7', GITHUB_SHA: main },
 	});
 	assert.equal(r.status, 0, r.stderr);
 	assert.deepEqual(r.outputs, {
@@ -63,9 +89,10 @@ test('plan.mjs: a tag of the reference module releases to staging only', () => {
 		'compose.yaml': `services:\n  app:\n    image: ghcr.io/zutun-ch/example@${PLACEHOLDER_DIGEST}\n`,
 		'image/Dockerfile': 'FROM scratch\n',
 	});
+	const { main } = asCheckout(dir);
 	const r = runScript('plan.mjs', ['--workflow', 'module'], {
 		cwd: dir,
-		env: { GITHUB_REPOSITORY: 'zutun-ch/module-example', GITHUB_REF: 'refs/tags/v3' },
+		env: { GITHUB_REPOSITORY: 'zutun-ch/module-example', GITHUB_REF: 'refs/tags/v3', GITHUB_SHA: main },
 	});
 	assert.equal(r.status, 0, r.stderr);
 	assert.equal(r.outputs.publish, 'true');
@@ -82,6 +109,27 @@ test('plan.mjs: main checks only; the agent has no images; mistakes are annotati
 	const wrong = runScript('plan.mjs', ['--workflow', 'module'], { cwd: scratch(), env: { GITHUB_REPOSITORY: 'zutun-ch/caddy', GITHUB_REF: 'refs/tags/v1' } });
 	assert.equal(wrong.status, 1);
 	assert.match(wrong.stderr, /^::error::module.yml releases repositories named module-<name>/);
+});
+
+test('plan.mjs: a tag on a commit that is not on main releases nothing', () => {
+	const dir = moduleRepo();
+	const { side } = asCheckout(dir);
+	const r = runScript('plan.mjs', ['--workflow', 'module'], {
+		cwd: dir,
+		env: { GITHUB_REPOSITORY: 'zutun-ch/module-mail', GITHUB_REF: 'refs/tags/v7', GITHUB_SHA: side },
+	});
+	assert.equal(r.status, 1);
+	assert.match(r.stderr, new RegExp(`^::error::the release tag points at ${side}, which isn't on main`));
+	assert.deepEqual(r.outputs, {});
+});
+
+test('plan.mjs: a tag is refused when the checkout has no origin/main to compare with', () => {
+	const r = runScript('plan.mjs', ['--workflow', 'module'], {
+		cwd: moduleRepo(),
+		env: { GITHUB_REPOSITORY: 'zutun-ch/module-mail', GITHUB_REF: 'refs/tags/v7' },
+	});
+	assert.equal(r.status, 1);
+	assert.match(r.stderr, /origin\/main isn't in the checkout; the plan job checks the repository out with fetch-depth: 0/);
 });
 
 test('stack-bundle.mjs: a release sets the version and pins digests in the bundle, not in the checkout', () => {
