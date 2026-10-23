@@ -83,7 +83,7 @@ export function readRelease(dir, { commit, sha256: expected }) {
 	return { commit: release.commit, notes: release.notes ?? null, artifacts };
 }
 
-/** The job summary table of a release, for the reviewers who approve it. */
+/** The job summary table of a release: what was signed and uploaded, on the run page. */
 export function summaryTable(release, extra = []) {
 	const rows = release.artifacts.map(
 		(a) => `| ${a.kind} | \`${a.name}\` | ${a.version ?? '–'} | \`${a.sha256}\` | ${a.size} |`,

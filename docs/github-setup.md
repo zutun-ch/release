@@ -1,6 +1,6 @@
 # GitHub setup for releases
 
-What the organisation and each release repo need so that only reviewed code is released, by the pinned workflows, after approval (architecture §8, "Repos and review"). The organisation-level parts are done once, by hand, with the commands below; the repo-level parts are applied to each repo by [`scripts/setup-repo.sh`](../scripts/setup-repo.sh), which can be run again at any time. The signing side is in [google-cloud-kms.md](google-cloud-kms.md).
+What the organisation and each release repo need so that only reviewed code is released, by the pinned workflows, on a tag only `platform-core` can create (architecture §8, "Repos and review"). The organisation-level parts are done once, by hand, with the commands below; the repo-level parts are applied to each repo by [`scripts/setup-repo.sh`](../scripts/setup-repo.sh), which can be run again at any time. The signing side is in [google-cloud-kms.md](google-cloud-kms.md).
 
 The commands use zutun's organisation, `zutun-ch`, as the example. Run them as an organisation owner with the GitHub CLI (`gh auth login`).
 
@@ -8,13 +8,13 @@ The commands use zutun's organisation, `zutun-ch`, as the example. Run them as a
 export GITHUB_ORG=zutun-ch
 ```
 
-Some of this needs a paid plan for private repositories: organisation rulesets, required reviewers on environments, and organisation secrets and variables for private repos are GitHub Team features.
+Some of this needs a paid plan for private repositories: organisation rulesets, environments, and organisation secrets and variables for private repos are GitHub Team features. Required reviewers on a private repo's environment need GitHub Enterprise, so on Team the approval of a release is creating its tag, which the organisation's "release tags" ruleset leaves to `platform-core` (below). Where a repo is public, or on Enterprise, `setup-repo.sh --required-reviewers` adds reviewers on top.
 
 ## Organisation
 
 ### The team platform-core
 
-zutun staff who review releases. It owns the release-relevant files of every repo (CODEOWNERS) and is the required reviewer of every `release` environment.
+zutun staff who review and release. It owns the release-relevant files of every repo (CODEOWNERS), and only its members can create `v*` tags, which is what starts a release.
 
 ```sh
 gh api -X POST "orgs/$GITHUB_ORG/teams" -f name=platform-core -f privacy=closed \
@@ -26,7 +26,7 @@ Partner teams get one team each, with write access to their own module repos onl
 
 ### Member privileges: only staff administer repos
 
-The KMS trust policy accepts a token from any repo of the organisation whose job ran in an environment called `release` (google-cloud-kms.md, step 4), and the reviewers of that environment are the only approval a release gets. Whoever administers a repo decides whether its `release` environment has reviewers, and its repo variables take precedence over the organisation's `ZUTUN_*` variables, so a repo admin also decides which control plane a release goes to. GitHub lets every member create repositories by default, and the creator administers the new repo: a partner could then create `module-anything`, give it a `release` environment without reviewers and have any bundle signed with release-modules.
+The KMS trust policy accepts a token from any repo of the organisation whose job ran on a `v*` tag in an environment called `release` (google-cloud-kms.md, step 4). The organisation's rulesets bind every repo, also a new one, but whoever administers a repo controls its `release` environment, and its repo variables take precedence over the organisation's `ZUTUN_*` variables, so a repo admin decides which control plane a release goes to. GitHub lets every member create repositories by default, and the creator administers the new repo.
 
 So members can't create repositories, and their base permission is read; zutun staff create the repos and run `setup-repo.sh` on each:
 
@@ -65,7 +65,7 @@ The lint job builds `zutun-agent` from the private agent repo with the organisat
 Two organisation rulesets, for every repo:
 
 - **main**: changes only through a pull request with one approval, including a code owner's; no force pushes, no deletion. Organisation admins may bypass it, so the owner can keep committing directly while the platform is before v1; remove the bypass once v1 is out.
-- **release tags**: `v*` tags can't be moved or deleted. Creating one starts a release, which still waits for approval in the `release` environment.
+- **release tags**: only `platform-core` can create a `v*` tag (the team is the ruleset's only bypass actor), and nobody can move or delete one. Creating the tag is the approval of a release: the release starts at once, from a commit on `main` only (the pipeline checks that), so a member of `platform-core` tags what was reviewed there. The workflow token can't create one either, being neither the team nor allowed to bypass.
 
 ```sh
 gh api -X POST "orgs/$GITHUB_ORG/rulesets" --input - <<'EOF'
@@ -95,7 +95,8 @@ gh api -X POST "orgs/$GITHUB_ORG/rulesets" --input - <<'EOF'
 }
 EOF
 
-gh api -X POST "orgs/$GITHUB_ORG/rulesets" --input - <<'EOF'
+CORE_TEAM_ID=$(gh api "orgs/$GITHUB_ORG/teams/platform-core" --jq .id)
+gh api -X POST "orgs/$GITHUB_ORG/rulesets" --input - <<EOF
 {
   "name": "release tags",
   "target": "tag",
@@ -104,8 +105,8 @@ gh api -X POST "orgs/$GITHUB_ORG/rulesets" --input - <<'EOF'
     "ref_name": { "include": ["refs/tags/v*"], "exclude": [] },
     "repository_name": { "include": ["~ALL"], "exclude": [] }
   },
-  "bypass_actors": [],
-  "rules": [{ "type": "update" }, { "type": "deletion" }]
+  "bypass_actors": [{ "actor_id": $CORE_TEAM_ID, "actor_type": "Team", "bypass_mode": "always" }],
+  "rules": [{ "type": "creation" }, { "type": "update" }, { "type": "deletion" }]
 }
 EOF
 
@@ -133,13 +134,14 @@ The organisation variables of [google-cloud-kms.md](google-cloud-kms.md), step 8
 scripts/setup-repo.sh zutun-ch/module-mail --partner-team mail-team
 # A platform repo:
 scripts/setup-repo.sh zutun-ch/caddy
-# Once two people can approve, on every repo:
-scripts/setup-repo.sh zutun-ch/module-mail --prevent-self-review
+# A public repo, or on Enterprise: platform-core as required reviewers on top,
+# and once two people can approve, "prevent self-review":
+scripts/setup-repo.sh zutun-ch/module-mail --required-reviewers --prevent-self-review
 ```
 
-It gives `platform-core` maintain access (and the partner team write access), makes the default workflow token read-only, and creates or updates the `release` environment: `platform-core` as required reviewers, deployments from `v*` tags only (any branch rule is removed), and "prevent self-review" when asked. It fails if the repo or its `release` environment has a `ZUTUN_*` variable of its own, which would override the organisation's. Then it reports whether `.github/CODEOWNERS` and the caller workflow `.github/workflows/release.yml` exist; those are files in the repo, added by pull request.
+It first checks that an active organisation ruleset lets only `platform-core` create `v*` tags and nobody move or delete one, and changes nothing without it. Then it gives `platform-core` maintain access (and the partner team write access), makes the default workflow token read-only, and creates or updates the `release` environment: deployments from `v*` tags only (any branch rule is removed) and, with `--required-reviewers`, `platform-core` as required reviewers with "prevent self-review" when asked. It fails if the repo or its `release` environment has a `ZUTUN_*` variable of its own, which would override the organisation's. Then it reports whether `.github/CODEOWNERS` and the caller workflow `.github/workflows/release.yml` exist; those are files in the repo, added by pull request.
 
-GitHub environments ask for one approval from the listed reviewers. Architecture §8 wants two people for the core releases "once possible"; until GitHub can require two approvals, "prevent self-review" makes sure the one approval comes from someone other than the person who pushed the tag.
+A release takes two people once `main`'s bypass is gone (v1): the approver of the pull request that brought the change to `main`, and the `platform-core` member who tags it. Architecture §8 wants two people for the core releases; where reviewers are possible, "prevent self-review" makes sure the environment's approval comes from someone other than the person who pushed the tag.
 
 ### CODEOWNERS
 

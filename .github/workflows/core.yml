@@ -3,7 +3,7 @@
 # (<owner>/caddy). Called by each from a short caller (README, "Calling the pipeline").
 #
 #   stacks: plan ── images ── bundle ── lint ──┬── publish-staging (only when configured)
-#   agent:  plan ── agent ─────────────────────┴── publish (environment "release", approval)
+#   agent:  plan ── agent ─────────────────────┴── publish (environment "release")
 #
 # A push to main builds and checks without pushing, signing or uploading. A tag v<N> releases
 # version N; for the agent, N is the build number of both zutun-agent-linux-amd64 and -arm64.
@@ -274,8 +274,10 @@ jobs:
           version: ${{ needs.plan.outputs.version }}
           release-sha256: ${{ needs.bundle.outputs.release-sha256 || needs.agent.outputs.release-sha256 }}
 
-  # Production (architecture §8, step 6): the job waits for a required reviewer of the repo's
-  # "release" environment, which allows v* tags only. Releases of one repo never overlap.
+  # Production (architecture §8, step 6): in the repo's "release" environment, which allows v*
+  # tags only, and only the core team creates those (the organisation's tag ruleset). Where the
+  # environment has required reviewers, the job waits for one. Releases of one repo never
+  # overlap.
   publish:
     name: Publish
     needs: [plan, bundle, lint, agent, publish-staging]

@@ -2,11 +2,11 @@
 # <owner>/module-<name> from a short caller (README, "Calling the pipeline"):
 #
 #   plan ── images ── bundle ── lint ──┬── publish-staging (only when staging is configured)
-#                                      └── publish (environment "release", after approval)
+#                                      └── publish (environment "release")
 #
 # A push to main builds and checks everything without pushing images, signing or uploading.
 # A tag v<N> releases version N: images pushed and pinned, the bundle packed once, signed with
-# the staging key (if configured) and, after approval, with release-modules through Cloud KMS,
+# the staging key (if configured) and with release-modules through Cloud KMS,
 # and uploaded. Both signatures cover the same bundle, byte for byte.
 #
 # Only this file on main may sign with release-modules: the KMS trust policy and the control
@@ -220,8 +220,10 @@ jobs:
           version: ${{ needs.plan.outputs.version }}
           release-sha256: ${{ needs.bundle.outputs.release-sha256 }}
 
-  # Production (architecture §8, step 6): the job waits for a required reviewer of the repo's
-  # "release" environment, which allows v* tags only. Releases of one module never overlap.
+  # Production (architecture §8, step 6): in the repo's "release" environment, which allows v*
+  # tags only, and only the core team creates those (the organisation's tag ruleset). Where the
+  # environment has required reviewers, the job waits for one. Releases of one module never
+  # overlap.
   # A module released to staging only (the reference module, architecture §9) never gets here.
   publish:
     name: Publish

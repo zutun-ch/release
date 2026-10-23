@@ -69,10 +69,10 @@ The provider's attribute condition is the trust policy of architecture §8. A to
 
 - `repository_owner` is the organisation (and `repository_owner_id` its numeric id, which survives a rename and can't be taken over by a new organisation of the same name);
 - `job_workflow_ref` is one of the two pinned release workflows on the protected `main`;
-- `environment` is `release` (the job waited for a required reviewer);
+- `environment` is `release` (which takes `v*` tags only);
 - `ref` is a `v*` tag.
 
-The condition can't tell whether a repo's `release` environment has reviewers: that is GitHub's side, which only zutun staff administer (github-setup.md, "Member privileges").
+The condition can't tell who created the tag: that is GitHub's side, the organisation's ruleset that lets only `platform-core` create `v*` tags, which only zutun staff administer (github-setup.md, "Rulesets" and "Member privileges").
 
 ```sh
 export ORG_ID=$(gh api "orgs/$GITHUB_ORG" --jq .id)

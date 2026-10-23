@@ -1,7 +1,7 @@
-// Whether a release tag points at reviewed code. Anyone with write access can push a v<N> tag,
-// and nothing in GitHub stops one on a commit of an unreviewed branch; the reviewer of the
-// release environment sees only the tag. So a release must be a commit on main, which takes
-// changes only through reviewed pull requests (architecture §8, "Repos and review").
+// Whether a release tag points at reviewed code. Only the core team can create a v<N> tag (the
+// organisation's tag ruleset), but nothing in GitHub stops one on a commit of an unreviewed
+// branch, and whoever creates it sees only the tag. So a release must be a commit on main,
+// which takes changes only through reviewed pull requests (architecture §8, "Repos and review").
 
 import { spawnSync } from 'node:child_process';
 import { ReleaseError } from './actions.mjs';
