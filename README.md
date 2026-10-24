@@ -119,7 +119,7 @@ CI also runs actionlint (the official image, pinned by digest) and ShellCheck.
 
 ### The agent commit for lint
 
-The lint job builds `zutun-agent` from the agent repo at the commit this repo pins: `AGENT_COMMIT` in `scripts/lib/lint.mjs`, which is also the `agent-commit` default of `module.yml` and `core.yml` (a test keeps the three equal). When an agent release changes `zutun-agent lint`, raise all three to that release's commit. If the pinned agent doesn't offer `lint` as the pipeline calls it, the lint job fails and says so.
+The lint job builds `zutun-agent` from the agent repo at the commit this repo pins: `AGENT_COMMIT` in `scripts/lib/lint.mjs`, which is also the `agent-commit` default of `module.yml` and `core.yml` (a test keeps the three equal). When an agent release changes `zutun-agent lint`, raise all three to that release's commit; a change of the manifest schema is such a change, since an agent with an older copy refuses every manifest that uses the new fields. With the agent repo next to this one (or `AGENT_DIR`), a test compares the pinned commit's schema copy with the platform's and fails until the pin is raised (CI has no agent checkout and skips it). If the pinned agent doesn't offer `lint` as the pipeline calls it, the lint job fails and says so.
 
 Callers don't pass `agent-commit`. The check only means something if every release is held to the same rules, and an older agent's lint predates the compose rules added since (architecture §8, review B-74). So a release (a `v<N>` tag) refuses any other value at Plan, before anything is built. A push to `main` may try another agent's lint, for instance a newer one before the pin is raised; the plan notes that a release would refuse it.
 

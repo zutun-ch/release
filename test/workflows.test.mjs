@@ -1,12 +1,13 @@
 // Workflow hygiene (architecture §8) and the contract between the workflows and their composite
 // actions, checked on the files themselves. actionlint (CI) checks the expressions.
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { parseYaml } from './lib/yaml.mjs';
 import { AGENT_COMMIT } from '../scripts/lib/lint.mjs';
-import { repo } from './helpers.mjs';
+import { platformFile, repo } from './helpers.mjs';
 
 const read = (rel) => readFileSync(path.join(repo, rel), 'utf8');
 const workflowFiles = readdirSync(path.join(repo, '.github/workflows')).map((f) => `.github/workflows/${f}`);
@@ -226,6 +227,26 @@ test('composite run steps declare their shell and reach scripts relative to the 
 test('both workflows build lint from the pinned agent commit, a full SHA', () => {
 	assert.match(AGENT_COMMIT, /^[0-9a-f]{40}$/);
 	for (const wf of [module, core]) assert.equal(wf.on.workflow_call.inputs['agent-commit'].default, AGENT_COMMIT, wf.name);
+});
+
+// The agent repo next to this one (or AGENT_DIR), when it has the pinned commit; CI checks out
+// only platform, so there the test is skipped and the pin is raised by hand (README).
+function pinnedAgentFile(rel) {
+	const dir = process.env.AGENT_DIR ? path.resolve(process.env.AGENT_DIR) : path.resolve(repo, '..', 'agent');
+	if (!existsSync(path.join(dir, '.git'))) return null;
+	try {
+		return execFileSync('git', ['-C', dir, 'show', `${AGENT_COMMIT}:${rel}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+	} catch {
+		return null;
+	}
+}
+
+test("the pinned agent's lint knows the platform's manifest schema", (t) => {
+	const pinned = pinnedAgentFile('internal/manifest/manifest.v1.schema.json');
+	if (pinned === null) return t.skip(`no agent checkout with ${AGENT_COMMIT}`);
+	// A manifest of the current schema (titles, the form subset, the SSO fields) is refused by an
+	// agent whose copy is older, so every release would fail lint until the pin is raised.
+	assert.equal(pinned, readFileSync(platformFile('spec/manifest/manifest.v1.schema.json'), 'utf8'), 'raise the agent commit (README, "The agent commit for lint")');
 });
 
 test("both workflows hand the plan the caller's agent-commit, so a release can refuse another", () => {
