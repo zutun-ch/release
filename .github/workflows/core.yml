@@ -1,6 +1,6 @@
 # The release pipeline of the platform's own repositories (architecture §8), signed with
 # release-core: the agent (<owner>/agent), the host stack (<owner>/host) and the ingress stack
-# (<owner>/caddy). Called by each from a short caller (README, "Calling the pipeline").
+# (<owner>/ingress). Called by each from a short caller (README, "Calling the pipeline").
 #
 #   stacks: plan ── images ── bundle ── lint ──┬── publish-staging (only when configured)
 #   agent:  plan ── agent ─────────────────────┴── publish (environment "release")

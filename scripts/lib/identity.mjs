@@ -14,12 +14,14 @@ export const ARCHES = ['amd64', 'arm64'];
 
 /**
  * The platform's own repositories and what they release through core.yml (CONTROL-PLANE §7).
- * These names are the software's own, the same in every deployment (CONTROL-PLANE §9).
+ * These names are the software's own, the same in every deployment (CONTROL-PLANE §9). They are
+ * the repositories' current names, the ones GitHub's token carries: the ingress stack's repo was
+ * `caddy` until review rev 30, and that name releases nothing any more.
  */
 const CORE_REPOS = {
 	agent: { kind: 'agent', name: 'agent' },
-	caddy: { kind: 'stack', name: 'ingress' },
 	host: { kind: 'stack', name: 'host' },
+	ingress: { kind: 'stack', name: 'ingress' },
 };
 
 /**
@@ -32,9 +34,9 @@ const STAGING_ONLY = new Set(['example']);
 /**
  * The release target of `<owner>/<repo>` under a workflow:
  * - module.yml: `module-<name>` releases the stack `<name>`;
- * - core.yml: `agent`, `caddy` (the stack `ingress`) and `host`.
+ * - core.yml: `agent` releases the agent's builds, `host` and `ingress` the stacks of the same name.
  * `imageBase` names the repo's images (README, "Image layout"): the repo's name without
- * `module-`, so `module-mail` pushes `mail` and `caddy` pushes `caddy`. `production` is false
+ * `module-`, so `module-mail` pushes `mail` and `ingress` pushes `ingress`. `production` is false
  * for a module that is released to staging only.
  */
 export function releaseTarget(repository, workflow) {

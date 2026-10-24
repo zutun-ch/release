@@ -1,6 +1,6 @@
 # zutun release
 
-The release pipeline: the reusable workflows `module.yml` (module repos `<owner>/module-<name>`, key `release-modules`) and `core.yml` (`agent`, `host`, `caddy` whose stack is `ingress`, key `release-core`), the composite actions their jobs use, and the Node and sh tooling behind them. It builds images and bundles, checks them, signs through Cloud KMS and uploads to the control plane.
+The release pipeline: the reusable workflows `module.yml` (module repos `<owner>/module-<name>`, key `release-modules`) and `core.yml` (`agent`, `host` and `ingress`, key `release-core`), the composite actions their jobs use, and the Node and sh tooling behind them. It builds images and bundles, checks them, signs through Cloud KMS and uploads to the control plane.
 
 ## Read first
 
@@ -14,7 +14,7 @@ The release pipeline: the reusable workflows `module.yml` (module repos `<owner>
 
 ## Contracts
 
-- **Name from the repository, never an input.** `module-<name>` → stack `<name>`; `agent` → agent builds `zutun-agent-linux-{amd64,arm64}`; `caddy` → stack `ingress`; `host` → stack `host` (`scripts/lib/identity.mjs`, mirroring the control plane's `registry.ts`). The reference module `example` is staging-only (architecture §9): the plan's `production` output is false and module.yml's production publish job doesn't run.
+- **Name from the repository, never an input.** `module-<name>` → stack `<name>`; `agent` → agent builds `zutun-agent-linux-{amd64,arm64}`; `host` → stack `host`; `ingress` → stack `ingress` (`scripts/lib/identity.mjs`, mirroring the control plane's `registry.ts`). The repo was `caddy` until review rev 30; GitHub's token carries the current name, so `caddy` releases nothing (CONTROL-PLANE §7). The reference module `example` is staging-only (architecture §9): the plan's `production` output is false and module.yml's production publish job doesn't run.
 - **Version from the tag** `v<N>`, N a positive integer without leading zeros (the control plane compares `ref` with `refs/tags/v<version>` exactly). Other refs build and check only; a malformed `v…` tag fails. The tagged commit must be on main (`scripts/lib/git.mjs`; the plan job checks out with `fetch-depth: 0`): a tag on an unreviewed branch releases nothing.
 - **Key id = `<KMS crypto key>-<version>`**, derived from the `ZUTUN_KMS_*` variable; the workflow fixes the family (`release-modules`, `release-core`, `staging`) and the scope check of PROTOCOL §6.3 runs before KMS is asked.
 - **Same bytes signed everywhere:** the bundle is built once, handed on as the artifact `release-build` with `release.json`, re-hashed before signing, signed for staging and production. Lint and the publish jobs trust the artifact only through job outputs, because any job of the caller's workflow can upload one: lint checks the bundle's `sha256`, publish checks release.json's (`release-sha256`) and that it lists exactly what the plan derived.

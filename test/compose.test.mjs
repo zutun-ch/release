@@ -86,8 +86,8 @@ test('CRLF files keep their line endings', () => {
 	assert.equal(pinDigests(crlf, { 'ghcr.io/o/x': D1 }), crlf.replace(PLACEHOLDER_DIGEST, D1));
 });
 
-test("the caddy and module-example repos' compose files pin as they are", (t) => {
-	for (const [dir, image] of [['caddy', 'ghcr.io/zutun-ch/caddy'], ['module-example', 'ghcr.io/zutun-ch/example']]) {
+test("the ingress and module-example repos' compose files pin as they are", (t) => {
+	for (const [dir, image] of [['ingress', 'ghcr.io/zutun-ch/ingress'], ['module-example', 'ghcr.io/zutun-ch/example']]) {
 		let text;
 		try {
 			text = readFileSync(path.join(repo, '..', dir, 'compose.yaml'), 'utf8');

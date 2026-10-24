@@ -58,7 +58,7 @@ gh repo edit "$GITHUB_ORG/release" --visibility public --accept-visibility-chang
 
 ### Secrets for the agent checkout
 
-The lint job builds `zutun-agent` from the private agent repo with the organisation's GitHub App, the same one the repos' CI uses to read the platform repo. Install the App on the `agent` repo too (contents: read), and make the organisation secrets `PLATFORM_APP_CLIENT_ID` and `PLATFORM_APP_PRIVATE_KEY` available to every module repo and to `caddy` and `host`. Callers pass exactly these two under `secrets:`, never `secrets: inherit`, so no other secret of the repo reaches the pipeline.
+The lint job builds `zutun-agent` from the private agent repo with the organisation's GitHub App, the same one the repos' CI uses to read the platform repo. Install the App on the `agent` repo too (contents: read), and make the organisation secrets `PLATFORM_APP_CLIENT_ID` and `PLATFORM_APP_PRIVATE_KEY` available to every module repo and to `ingress` and `host`. Callers pass exactly these two under `secrets:`, never `secrets: inherit`, so no other secret of the repo reaches the pipeline.
 
 ### Rulesets
 
@@ -133,7 +133,7 @@ The organisation variables of [google-cloud-kms.md](google-cloud-kms.md), step 8
 # A module repo, with its partner team:
 scripts/setup-repo.sh zutun-ch/module-mail --partner-team mail-team
 # A platform repo:
-scripts/setup-repo.sh zutun-ch/caddy
+scripts/setup-repo.sh zutun-ch/ingress
 # A public repo, or on Enterprise: platform-core as required reviewers on top,
 # and once two people can approve, "prevent self-review":
 scripts/setup-repo.sh zutun-ch/module-mail --required-reviewers --prevent-self-review
@@ -155,7 +155,7 @@ A release takes two people once `main`'s bypass is gone (v1): the approver of th
 /.github/        @zutun-ch/platform-core
 ```
 
-In `agent`, `caddy`, `host` and `release`: `* @zutun-ch/platform-core`.
+In `agent`, `host`, `ingress` and `release`: `* @zutun-ch/platform-core`.
 
 ### The caller workflow
 

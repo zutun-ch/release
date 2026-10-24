@@ -110,7 +110,7 @@ test('plan.mjs: main checks only; the agent has no images; mistakes are annotati
 	assert.equal(main.outputs.publish, 'false');
 	assert.equal(main.outputs.version, '');
 	assert.equal(main.outputs.images, '[]');
-	const wrong = runScript('plan.mjs', ['--workflow', 'module'], { cwd: scratch(), env: { GITHUB_REPOSITORY: 'zutun-ch/caddy', GITHUB_REF: 'refs/tags/v1' } });
+	const wrong = runScript('plan.mjs', ['--workflow', 'module'], { cwd: scratch(), env: { GITHUB_REPOSITORY: 'zutun-ch/ingress', GITHUB_REF: 'refs/tags/v1' } });
 	assert.equal(wrong.status, 1);
 	assert.match(wrong.stderr, /^::error::module.yml releases repositories named module-<name>/);
 });

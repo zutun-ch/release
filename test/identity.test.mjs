@@ -26,20 +26,24 @@ test('module.yml: the reference module example goes to staging only (architectur
 });
 
 test('module.yml refuses repos that are not module-<name>, bad names and reserved names', () => {
-	for (const repo of ['zutun-ch/example', 'zutun-ch/caddy', 'zutun-ch/module-', 'zutun-ch/module-x', 'zutun-ch/module-Mail',
+	for (const repo of ['zutun-ch/example', 'zutun-ch/ingress', 'zutun-ch/module-', 'zutun-ch/module-x', 'zutun-ch/module-Mail',
 		'zutun-ch/module-1st', 'zutun-ch/module-host', 'zutun-ch/module-ingress', 'zutun-ch/module-agent',
 		'zutun-ch/module-admin', 'zutun-ch/module-well-known', `zutun-ch/module-${'a'.repeat(32)}`]) {
 		assert.throws(() => releaseTarget(repo, 'module'), ReleaseError, repo);
 	}
 });
 
-test('core.yml: agent, caddy (the stack ingress) and host, nothing else', () => {
+test('core.yml: agent, host and ingress, nothing else', () => {
 	assert.deepEqual(releaseTarget('zutun-ch/agent', 'core'), { owner: 'zutun-ch', kind: 'agent', name: 'agent', imageBase: 'agent', production: true });
-	assert.deepEqual(releaseTarget('zutun-ch/caddy', 'core'), { owner: 'zutun-ch', kind: 'stack', name: 'ingress', imageBase: 'caddy', production: true });
 	assert.deepEqual(releaseTarget('zutun-ch/host', 'core'), { owner: 'zutun-ch', kind: 'stack', name: 'host', imageBase: 'host', production: true });
-	for (const repo of ['zutun-ch/module-mail', 'zutun-ch/ingress', 'zutun-ch/platform', 'zutun-ch/release']) {
+	assert.deepEqual(releaseTarget('zutun-ch/ingress', 'core'), { owner: 'zutun-ch', kind: 'stack', name: 'ingress', imageBase: 'ingress', production: true });
+	for (const repo of ['zutun-ch/module-mail', 'zutun-ch/module-ingress', 'zutun-ch/platform', 'zutun-ch/release']) {
 		assert.throws(() => releaseTarget(repo, 'core'), ReleaseError, repo);
 	}
+});
+
+test("core.yml: the ingress stack's former repo name caddy releases nothing (review rev 30)", () => {
+	assert.throws(() => releaseTarget('zutun-ch/caddy', 'core'), /core.yml releases the repositories agent, host, ingress; zutun-ch\/caddy isn't one of them/);
 });
 
 test('an unknown workflow or a malformed repository is refused', () => {

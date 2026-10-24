@@ -3,7 +3,7 @@
 The release pipeline of zutun: two reusable GitHub workflows that build, check, sign and upload every module and every platform component (architecture §8, "build once, sign per environment").
 
 - [`module.yml`](.github/workflows/module.yml) releases a module from its repo `<owner>/module-<name>`, signed with `release-modules`.
-- [`core.yml`](.github/workflows/core.yml) releases the platform's own: the agent (`<owner>/agent`), the `host` stack (`<owner>/host`) and the `ingress` stack (`<owner>/caddy`), signed with `release-core`.
+- [`core.yml`](.github/workflows/core.yml) releases the platform's own: the agent (`<owner>/agent`), the `host` stack (`<owner>/host`) and the `ingress` stack (`<owner>/ingress`), signed with `release-core`.
 
 Signing keys live in Google Cloud KMS and never leave it; the workflows reach them through GitHub OIDC and Workload Identity Federation, with no stored Google credential. Setting that up: [docs/google-cloud-kms.md](docs/google-cloud-kms.md). The GitHub side (teams, rulesets, the `release` environment, CODEOWNERS): [docs/github-setup.md](docs/github-setup.md).
 
@@ -55,7 +55,7 @@ jobs:
       PLATFORM_APP_PRIVATE_KEY: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
 ```
 
-`caddy` and `host` use the same caller with `core.yml`, and so will `agent`, without the `secrets:` block: its release builds no stack and runs no lint. The reference module `example`, from `module-example`, is released to staging only (architecture §9): its run stops before the production publish job. To release, tag a commit on `main` (a tag on any other branch is refused at Plan): `git tag -a v12 -m "What changed" && git push origin v12`. The tag's message becomes the release notes.
+`ingress` and `host` use the same caller with `core.yml`, and so will `agent`, without the `secrets:` block: its release builds no stack and runs no lint. The reference module `example`, from `module-example`, is released to staging only (architecture §9): its run stops before the production publish job. To release, tag a commit on `main` (a tag on any other branch is refused at Plan): `git tag -a v12 -m "What changed" && git push origin v12`. The tag's message becomes the release notes.
 
 ## What a release repo looks like
 
@@ -71,7 +71,7 @@ Only `manifest.yaml`, `compose.yaml` and `scripts/` go into the bundle. `compose
 
 ### Image layout
 
-- `image/Dockerfile` builds the repo's image, named after the repo without `module-`: `module-mail` builds `ghcr.io/<owner>/mail`, `caddy` builds `ghcr.io/<owner>/caddy`. The directory is the build context.
+- `image/Dockerfile` builds the repo's image, named after the repo without `module-`: `module-mail` builds `ghcr.io/<owner>/mail`, `ingress` builds `ghcr.io/<owner>/ingress`. The directory is the build context.
 - `images/<suffix>/Dockerfile` builds further images, `ghcr.io/<owner>/<name>-<suffix>`, with `<suffix>` matching `^[a-z0-9][a-z0-9-]{0,30}$`.
 - A repo with neither builds no image (`host`, or a module made of third-party images only).
 
