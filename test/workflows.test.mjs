@@ -6,8 +6,10 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { parseYaml } from './lib/yaml.mjs';
-import { AGENT_COMMIT } from '../scripts/lib/lint.mjs';
-import { platformFile, repo } from './helpers.mjs';
+import { createHash } from 'node:crypto';
+import { ReleaseError } from '../scripts/lib/actions.mjs';
+import { AGENT_COMMIT, checkAgentCommit, FLOOR_AGENT_COMMIT } from '../scripts/lib/lint.mjs';
+import { lockedReaders, platformFile, readJson, repo } from './helpers.mjs';
 
 const read = (rel) => readFileSync(path.join(repo, rel), 'utf8');
 const workflowFiles = readdirSync(path.join(repo, '.github/workflows')).map((f) => `.github/workflows/${f}`);
@@ -184,7 +186,7 @@ test('lint checks the bundle against the sha256 the bundle job reported', () => 
 	}
 	const unpack = actions['.github/actions/lint/action.yml'].runs.steps.find((s) => s.name === 'Unpack the bundle');
 	assert.equal(unpack.env.SHA256, '${{ inputs.bundle-sha256 }}');
-	assert.match(unpack.run, /sha256sum "\$RUNNER_TEMP\/release\/\$NAME\.tar\.gz"[\s\S]*\[ "\$actual" != "\$SHA256" \][\s\S]*exit 1[\s\S]*tar -xzf/);
+	assert.match(unpack.run, /sha256sum "\$work\/release\/\$NAME\.tar\.gz"[\s\S]*\[ "\$actual" != "\$SHA256" \][\s\S]*exit 1[\s\S]*tar -xzf "\$work\/release\/\$NAME\.tar\.gz"/);
 });
 
 test('every variable a publish job reads is checked first, by name', () => {
@@ -231,11 +233,11 @@ test('both workflows build lint from the pinned agent commit, a full SHA', () =>
 
 // The agent repo next to this one (or AGENT_DIR), when it has the pinned commit; CI checks out
 // only platform, so there the test is skipped and the pin is raised by hand (README).
-function pinnedAgentFile(rel) {
+function pinnedAgentFile(rel, commit = AGENT_COMMIT, encoding = 'utf8') {
 	const dir = process.env.AGENT_DIR ? path.resolve(process.env.AGENT_DIR) : path.resolve(repo, '..', 'agent');
 	if (!existsSync(path.join(dir, '.git'))) return null;
 	try {
-		return execFileSync('git', ['-C', dir, 'show', `${AGENT_COMMIT}:${rel}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+		return execFileSync('git', ['-C', dir, 'show', `${commit}:${rel}`], { encoding, stdio: ['ignore', 'pipe', 'ignore'] });
 	} catch {
 		return null;
 	}
@@ -249,6 +251,88 @@ test("the pinned agent's lint knows the platform's manifest schema", (t) => {
 	assert.equal(pinned, readFileSync(platformFile('spec/manifest/manifest.v1.schema.json'), 'utf8'), 'raise the agent commit (README, "The agent commit for lint")');
 });
 
+test('core.yml lints host a second time, always, with the floor agent written into the workflow', () => {
+	assert.match(FLOOR_AGENT_COMMIT, /^[0-9a-f]{40}$/);
+	assert.notEqual(FLOOR_AGENT_COMMIT, AGENT_COMMIT, 'the floor lint is a second agent, not the pinned one again');
+	const steps = core.jobs.lint.steps;
+	const lints = steps.filter((s) => s.uses === './.release/.github/actions/lint');
+	assert.equal(lints.length, 2);
+	const [pinned, floor] = lints;
+	assert.ok(steps.indexOf(floor) > steps.indexOf(pinned));
+	assert.equal(floor.name, 'Lint with the floor agent');
+	// Only for host, by the plan's name, which comes from the repository and never an input.
+	assert.equal(floor.if, "needs.plan.outputs.name == 'host'");
+	assert.equal(pinned.if, undefined, 'the pinned lint runs for every stack');
+	assert.equal(core.jobs.lint.if, "needs.plan.outputs.kind == 'stack'");
+	// The commit is the constant itself, not an expression: no caller and no input chooses it.
+	assert.equal(floor.with['agent-commit'], FLOOR_AGENT_COMMIT);
+	assert.equal(floor.with.floor, 'true');
+	assert.equal(floor.with.name, '${{ needs.plan.outputs.name }}');
+	assert.equal(floor.with['bundle-sha256'], '${{ needs.bundle.outputs.sha256 }}');
+	assert.equal(pinned.with.floor, undefined);
+	for (const [name, input] of Object.entries(core.on.workflow_call.inputs)) {
+		assert.notEqual(input.default, FLOOR_AGENT_COMMIT, `the input ${name} doesn't carry the floor`);
+		assert.doesNotMatch(name, /floor/);
+	}
+	// Both publish jobs wait for the lint job, so a host bundle the floor refuses is never signed.
+	for (const job of ['publish', 'publish-staging']) assert.ok(core.jobs[job].needs.includes('lint'), job);
+});
+
+test('the floor agent appears in core.yml only, never in module.yml or another action', () => {
+	assert.ok(read('.github/workflows/core.yml').includes(FLOOR_AGENT_COMMIT));
+	for (const file of [...workflowFiles, ...actionFiles].filter((f) => f !== '.github/workflows/core.yml')) {
+		assert.ok(!read(file).includes(FLOOR_AGENT_COMMIT), file);
+	}
+	assert.ok(!module.jobs.lint.steps.some((s) => s.with?.floor !== undefined));
+});
+
+test('checkAgentCommit is unchanged by the floor: a release takes the pinned commit only', () => {
+	assert.equal(checkAgentCommit(AGENT_COMMIT, true), null);
+	for (const other of [FLOOR_AGENT_COMMIT, 'f'.repeat(40), '', undefined]) {
+		assert.throws(() => checkAgentCommit(other, true), ReleaseError, String(other));
+	}
+	assert.match(checkAgentCommit(FLOOR_AGENT_COMMIT, false), /fine for a check, but a release would refuse it/);
+});
+
+test('the lint action keeps each agent run in directories of its own, so one job can lint twice', () => {
+	const steps = actions['.github/actions/lint/action.yml'].runs.steps;
+	const byName = (name) => steps.find((s) => s.name === name || s.uses?.startsWith(name));
+	assert.equal(byName('Fetch the bundle').with.path, '${{ runner.temp }}/lint-${{ inputs.agent-commit }}/release');
+	assert.equal(byName('Check out the agent').with.path, '.agent-${{ inputs.agent-commit }}');
+	assert.equal(byName('actions/setup-go@').with['go-version-file'], '.agent-${{ inputs.agent-commit }}/go.mod');
+	assert.equal(byName('Build zutun-agent')['working-directory'], '.agent-${{ inputs.agent-commit }}');
+	assert.match(byName('Build zutun-agent').run, /-o "\$RUNNER_TEMP\/lint-\$AGENT_COMMIT\/zutun-agent"/);
+	assert.match(byName('Unpack the bundle').run, /work="\$RUNNER_TEMP\/lint-\$AGENT_COMMIT"/);
+	const lint = byName('zutun-agent lint');
+	assert.match(lint.run, /lint-bundle\.sh" "\$RUNNER_TEMP\/lint-\$AGENT_COMMIT\/zutun-agent" "\$NAME" "\$RUNNER_TEMP\/lint-\$AGENT_COMMIT\/bundle" "\$FLOOR"$/);
+	assert.equal(lint.env.FLOOR, '${{ inputs.floor }}');
+	// The commit is checked to be a full SHA before any step puts it in a path.
+	assert.equal(steps[0].name, 'Check the inputs');
+	assert.match(steps[0].run, /grep -Eqx '\[0-9a-f\]\{40\}'/);
+	assert.equal(actions['.github/actions/lint/action.yml'].inputs.floor.default, 'false');
+});
+
+test("the floor agent's schema copy is the platform's floor reader", (t) => {
+	const floor = readJson(platformFile('spec/manifest/readers/expect.json')).floor;
+	const sha = lockedReaders()[floor];
+	assert.match(sha ?? '', /^[0-9a-f]{64}$/, `the floor ${floor} is a reader of readers.lock`);
+	const embedded = pinnedAgentFile('internal/manifest/manifest.v1.schema.json', FLOOR_AGENT_COMMIT, 'buffer');
+	if (embedded === null) return t.skip(`no agent checkout with ${FLOOR_AGENT_COMMIT}`);
+	assert.equal(createHash('sha256').update(embedded).digest('hex'), sha, 'FLOOR_AGENT_COMMIT follows the floor of expect.json (README, "The floor lint")');
+});
+
+test("the agent job records the reader of the schema file the build embeds", (t) => {
+	const describe = core.jobs.agent.steps.find((s) => s.id === 'describe');
+	assert.match(describe.run, / --manifest-schema internal\/manifest\/manifest\.v1\.schema\.json$/);
+	// It runs in the agent's own checkout, after the build, before the builds are handed on.
+	const names = core.jobs.agent.steps.map((s) => s.name ?? s.uses);
+	assert.ok(names.indexOf('Check out the agent') < names.indexOf('Describe the release'));
+	assert.ok(names.indexOf('Describe the release') < names.indexOf('Hand the builds on'));
+	const embed = pinnedAgentFile('internal/manifest/schema.go', 'HEAD');
+	if (embed === null) return t.skip('no agent checkout');
+	assert.match(embed, /^\/\/go:embed manifest\.v1\.schema\.json$/m, 'the agent embeds the file the pipeline hashes');
+});
+
 test("both workflows hand the plan the caller's agent-commit, so a release can refuse another", () => {
 	for (const wf of [module, core]) {
 		const plan = wf.jobs.plan.steps.find((s) => s.id === 'plan');
@@ -259,10 +343,11 @@ test("both workflows hand the plan the caller's agent-commit, so a release can r
 	}
 });
 
-test("module.yml and core.yml share their jobs' shape: same steps apart from the agent build", () => {
+test("module.yml and core.yml share their jobs' shape: same steps apart from the agent build and the floor lint", () => {
 	for (const job of ['plan', 'images', 'bundle', 'lint', 'publish-staging', 'publish']) {
 		const names = (wf) => wf.jobs[job].steps.map((s) => s.name ?? s.uses.split('@')[0]);
-		assert.deepEqual(names(core).map((n) => n.replace('repository', 'module')), names(module), job);
+		const coreNames = names(core).map((n) => n.replace('repository', 'module')).filter((n) => !(job === 'lint' && n === 'Lint with the floor agent'));
+		assert.deepEqual(coreNames, names(module), job);
 	}
 });
 

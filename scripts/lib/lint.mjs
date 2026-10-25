@@ -14,6 +14,18 @@ import { ReleaseError } from './actions.mjs';
 export const AGENT_COMMIT = '1e400457ffcc8038510c393127ff3342d37ba65b';
 
 /**
+ * The agent at the recovery floor (MANIFEST §2.2, architecture §8, review D-134): agent tag v1,
+ * build 1, whose embedded manifest schema is the floor reader r22. The `host` stack carries the
+ * recovery scripts, so core.yml lints every `host` bundle a second time, always, with this
+ * agent's `zutun-agent lint`: the release that repairs a server must be one every build in the
+ * field reads, and only the real oldest binary sees its checks beyond the schema. A constant of
+ * the pipeline, written into core.yml (a test keeps the two equal) and never an input, so no
+ * caller chooses it and `checkAgentCommit` stays as it is. Raising the floor is a review
+ * decision; the constant follows it.
+ */
+export const FLOOR_AGENT_COMMIT = 'dde9f9baadf960d6031221e59a5495bd3039174e';
+
+/**
  * Checks the `agent-commit` a run was called with. A release (a v<N> tag, which signs and
  * uploads) takes the pinned commit only. A build-and-check run may try another agent's lint,
  * say a newer one before the pin is raised, and is told it couldn't release that way.

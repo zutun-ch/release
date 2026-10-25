@@ -16,8 +16,8 @@ A push to `main` builds and checks everything and stops there. A tag `v<N>` rele
 | Plan | the name from the repository (never from an input), the version from the tag, the images from the repo's layout; a release refuses an `agent-commit` other than the pinned one | read |
 | Images | builds each image for `linux/amd64` and `linux/arm64`; for a release pushes it to `ghcr.io/<owner>/<image>:v<N>` and stops unless every package is public | read, packages write |
 | Bundle | writes the version into `manifest.yaml` and the pushed digests into `compose.yaml` (in the bundle only), checks PROTOCOL §6.5, packs the bundle deterministically | read |
-| zutun-agent lint | checks the bundle is the one the bundle job packed, unpacks it and runs `zutun-agent lint`, built from the agent repo at a pinned commit | read |
-| Agent builds (core, agent only) | `go build -tags prod` for both architectures, version = build number = N | read |
+| zutun-agent lint | checks the bundle is the one the bundle job packed, unpacks it and runs `zutun-agent lint`, built from the agent repo at a pinned commit; for `host` a second time with the floor agent ("The floor lint") | read |
+| Agent builds (core, agent only) | `go build -tags prod` for both architectures, version = build number = N; records the build's manifest reader, the sha256 of the schema it embeds, for the upload | read |
 | Publish to staging | only when the staging variables exist: signs with the staging key, uploads to the staging control plane | read, id-token |
 | Publish | in the environment `release`, on a `v<N>` tag only `platform-core` can create (and after a required reviewer approves, where the environment has them): signs the **same** bytes with the release key through Cloud KMS, verifies the signature against the key's public key, uploads in the three steps of CONTROL-PLANE §7 with a fresh OIDC token for each | read, id-token |
 
@@ -96,7 +96,7 @@ The placeholder passes the compose policy's syntax check, and a bundle that stil
 .github/workflows/ci.yml                 this repo's CI: tests, actionlint, ShellCheck
 .github/actions/images/                  build, push, check public
 .github/actions/stack-bundle/            version, digests, pack, hand on
-.github/actions/lint/                    build zutun-agent at the pinned commit, lint
+.github/actions/lint/                    build zutun-agent at a commit (pinned, or the floor), lint
 .github/actions/publish/                 Google token, sign, verify, upload
 scripts/*.mjs, *.sh                      what the actions run (Node 24, no npm dependencies; POSIX sh)
 scripts/lib/                             the logic, one module per concern
@@ -113,7 +113,7 @@ No npm dependencies: Node's built-in test runner, Node 24.
 node --test 'test/*.test.mjs'
 ```
 
-They read the platform's test vectors from `../platform`, or from `PLATFORM_DIR`. They cover the name and version rules, image layout, digest pinning, deterministic packing and the bundle rules (checked byte by byte, with the system `tar`), the signed string and signatures against `platform/test-vectors/artifact-signatures.json`, key ids and scopes, the KMS client, the upload client against a fake control plane (refusals, retries with fresh tokens, a lost answer), the public-package check, the lint wrapper, `setup-repo.sh` against a stand-in `gh`, and the workflow files themselves (pinned actions, permissions per job, no expression in a shell script, the tooling commit check, inputs of the composite actions).
+They read the platform's test vectors from `../platform`, or from `PLATFORM_DIR`. They cover the name and version rules, image layout, digest pinning, deterministic packing and the bundle rules (checked byte by byte, with the system `tar`), the signed string and signatures against `platform/test-vectors/artifact-signatures.json`, key ids and scopes, the KMS client, the upload client against a fake control plane (refusals, retries with fresh tokens, a lost answer), the public-package check, the lint wrapper (also at the floor), the manifest reader of agent builds, `setup-repo.sh` against a stand-in `gh`, and the workflow files themselves (pinned actions, permissions per job, no expression in a shell script, the tooling commit check, inputs of the composite actions, the floor lint of `host`).
 
 CI also runs actionlint (the official image, pinned by digest) and ShellCheck.
 
@@ -122,6 +122,14 @@ CI also runs actionlint (the official image, pinned by digest) and ShellCheck.
 The lint job builds `zutun-agent` from the agent repo at the commit this repo pins: `AGENT_COMMIT` in `scripts/lib/lint.mjs`, which is also the `agent-commit` default of `module.yml` and `core.yml` (a test keeps the three equal). When an agent release changes `zutun-agent lint`, raise all three to that release's commit; a change of the manifest schema is such a change, since an agent with an older copy refuses every manifest that uses the new fields. With the agent repo next to this one (or `AGENT_DIR`), a test compares the pinned commit's schema copy with the platform's and fails until the pin is raised (CI has no agent checkout and skips it). If the pinned agent doesn't offer `lint` as the pipeline calls it, the lint job fails and says so.
 
 Callers don't pass `agent-commit`. The check only means something if every release is held to the same rules, and an older agent's lint predates the compose rules added since (architecture §8, review B-74). So a release (a `v<N>` tag) refuses any other value at Plan, before anything is built. A push to `main` may try another agent's lint, for instance a newer one before the pin is raised; the plan notes that a release would refuse it.
+
+### The floor lint
+
+`host` carries the recovery scripts (`agent/repair` among them), so it is written in floor form: every agent build from the platform's floor on must read it, the oldest included (platform MANIFEST §2.2, review D-134). `core.yml` therefore lints a `host` bundle twice, in the same job: with the pinned agent, as every stack, and then with the floor agent, `FLOOR_AGENT_COMMIT` in `scripts/lib/lint.mjs` (agent tag `v1`, build 1, reader `r22`). The real binary is used because a schema check alone can't see the agent's checks beyond the schema. The step runs whenever the plan's name is `host`, and its commit is written into `core.yml`, not taken from an input; a test keeps it equal to the constant and, with an agent checkout, checks that its embedded schema is the floor reader of the platform's `spec/manifest/readers/expect.json`. `checkAgentCommit` doesn't know the floor: a caller still can't choose any agent but the pinned one. Raising the floor is a review decision; the constant and `core.yml` follow it in one commit. A finding of the floor lint means the manifest isn't in floor form: keep `manifest.yaml` equal to the platform's `spec/manifest/examples/host.yaml`.
+
+### The manifest reader of an agent build
+
+An agent upload carries `manifest_reader` in step 1 (CONTROL-PLANE §7): the sha256 of `internal/manifest/manifest.v1.schema.json` in the agent's checkout, the file the build compiles in. The agent job's `agent-release.mjs --manifest-schema` hashes it into `release.json` for both architectures, so the publish jobs send what the build job recorded; a stack upload has none. The control plane refuses a reader that isn't in its copy of the platform's `readers.lock` (`reader_unknown`), so a build with a new reader waits until the control plane that knows it is deployed. A control plane from before rev 33 ignores the field; a build released to one gets its reader recorded by hand.
 
 ## When a release stops
 
@@ -138,3 +146,6 @@ Callers don't pass `agent-commit`. The check only means something if every relea
 | `Cloud KMS refused … (403)` | the key's IAM binding or the provider's condition (docs/google-cloud-kms.md, steps 4 and 5) |
 | `… already has this version or a higher one` | tag a higher version |
 | `the control plane rejected release …: <reason>` | the bundle failed a check in step 3 (CONTROL-PLANE §7) |
+| `zutun-agent lint at the floor - …` findings | `host` isn't in floor form: the oldest agent build can't read it ("The floor lint") |
+| `… doesn't know this build's manifest reader …` | the reader isn't in the deployed control plane's `readers.lock` yet: deploy the control plane that has it, then re-run ("The manifest reader of an agent build") |
+| `… has no manifest reader …` | the agent job recorded none: `agent-release.mjs` runs with `--manifest-schema` in the agent's checkout |

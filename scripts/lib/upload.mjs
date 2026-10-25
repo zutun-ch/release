@@ -1,8 +1,8 @@
 // The release upload of CONTROL-PLANE §7, in its three steps, so the bundle never passes through
 // the control plane's Worker:
-//   1. POST <origin>/api/releases with the artifact reference, the commit and notes, and a fresh
-//      GitHub OIDC token: answers 201 with a release id and a presigned PUT URL (10 minutes,
-//      bound to the size);
+//   1. POST <origin>/api/releases with the artifact reference, the commit and notes (and for an
+//      agent build its manifest reader), and a fresh GitHub OIDC token: answers 201 with a
+//      release id and a presigned PUT URL (10 minutes, bound to the size);
 //   2. PUT the bytes to that URL;
 //   3. POST <origin>/api/releases/<id>/complete with another fresh token (a token's jti is
 //      accepted once): the control plane checks the bytes and makes the release available.
@@ -14,6 +14,7 @@ import { jsonBody, Retryable, transient, withRetries } from './http.mjs';
 
 const RELEASE_ID = /^rel_[0-9A-HJKMNP-TV-Z]{26}$/;
 const NOTES_MAX_BYTES = 2000;
+const READER = /^[0-9a-f]{64}$/;
 
 /** An origin as the control plane checks it (the token's audience): https, no path. */
 export function checkOrigin(origin) {
@@ -40,7 +41,7 @@ export function truncateUtf8(text, max = NOTES_MAX_BYTES) {
 }
 
 /** What a step 1 refusal means for the person running the release. */
-function explainBegin(code, body, { ref, uncertain }) {
+function explainBegin(code, body, { ref, uncertain, manifestReader }) {
 	const what = `${ref.kind} ${ref.name} v${ref.version}`;
 	const earlier = uncertain
 		? ' An earlier attempt of this step may have reached the control plane before failing; if so, its upload is given up after 20 minutes, and re-running the workflow then succeeds.'
@@ -62,6 +63,8 @@ function explainBegin(code, body, { ref, uncertain }) {
 			return `${what}: the control plane already has this version or a higher one. Tag a higher version.${earlier}`;
 		case 'sha256_in_use':
 			return `another release already has this exact bundle (the same sha256).${earlier}`;
+		case 'reader_unknown':
+			return `the control plane doesn't know this build's manifest reader ${manifestReader}. A reader is frozen in the platform's spec/manifest/readers/readers.lock, and the control plane deployed with it, before an agent build that has it is released (MANIFEST §2.2, CONTROL-PLANE §7): deploy that control plane first, then re-run.`;
 		case 'signature':
 			return `the control plane doesn't accept the signature (${body?.reason ?? 'no reason given'}): is the key id in its RELEASE_KEYS setting, not revoked, and in scope for ${what}?`;
 		default:
@@ -71,13 +74,16 @@ function explainBegin(code, body, { ref, uncertain }) {
 
 /**
  * Uploads one artifact. `bytes` is the artifact, `ref` its signed reference (PROTOCOL §6.1),
- * `nextToken` returns a fresh OIDC token on each call. `fetch`, `retry` and `now` are for tests.
+ * `nextToken` returns a fresh OIDC token on each call. An agent build carries
+ * `manifestReader`, the sha256 of the manifest schema it embeds (MANIFEST §2.2), which step 1
+ * sends as `manifest_reader`; a stack has none. `fetch`, `retry` and `now` are for tests.
  */
 export async function uploadRelease({
 	origin,
 	ref,
 	commit,
 	notes = null,
+	manifestReader = null,
 	bytes,
 	nextToken,
 	fetch = globalThis.fetch,
@@ -87,6 +93,12 @@ export async function uploadRelease({
 }) {
 	checkOrigin(origin);
 	const what = `${ref.kind} ${ref.name} v${ref.version}`;
+	if (ref.kind === 'agent' && !READER.test(manifestReader ?? '')) {
+		throw new ReleaseError(`${what} has no manifest reader ("${manifestReader ?? ''}"): an agent upload carries the sha256 of the manifest schema the build embeds (CONTROL-PLANE §7, step 1)`);
+	}
+	if (ref.kind !== 'agent' && manifestReader !== null) {
+		throw new ReleaseError(`${what}: only an agent build has a manifest reader`);
+	}
 	const post = async (url, body) => {
 		const token = await nextToken();
 		return fetch(url, {
@@ -104,6 +116,7 @@ export async function uploadRelease({
 				...ref,
 				commit,
 				notes: notes ? truncateUtf8(notes) : null,
+				...(ref.kind === 'agent' ? { manifest_reader: manifestReader } : {}),
 			});
 			const body = await jsonBody(response);
 			if (response.status === 201 && RELEASE_ID.test(body?.id ?? '') && typeof body.upload_url === 'string') {
@@ -115,7 +128,7 @@ export async function uploadRelease({
 			if (transient(response.status)) {
 				throw new Retryable(`POST /api/releases answered ${response.status} ${body?.code ?? ''}`.trim());
 			}
-			throw new ReleaseError(`upload of ${what} refused (${response.status}): ${explainBegin(body?.code, body, { ref, uncertain })}`);
+			throw new ReleaseError(`upload of ${what} refused (${response.status}): ${explainBegin(body?.code, body, { ref, uncertain, manifestReader })}`);
 		},
 		// A failed attempt may still have reached the control plane; the refusal says so.
 		{ ...retry, log: (line) => ((uncertain = true), log(line)) },

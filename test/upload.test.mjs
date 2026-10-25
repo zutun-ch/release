@@ -8,7 +8,7 @@ import { signedString } from '../scripts/lib/artifact.mjs';
 import { githubTokens } from '../scripts/lib/oidc.mjs';
 import { checkOrigin, truncateUtf8, uploadRelease } from '../scripts/lib/upload.mjs';
 import { fakeControlPlane, fakeGithubOidc } from './fakes.mjs';
-import { keyFromSeed, noWait } from './helpers.mjs';
+import { keyFromSeed, lockedReaders, noWait } from './helpers.mjs';
 
 const key = keyFromSeed('6d0e6253fc5085dd6c9811479f9d4a2ae666d0ea2d8ab92a010b962b787ed5e3');
 const COMMIT = 'c0ffee'.padEnd(40, '0');
@@ -62,6 +62,32 @@ test('three steps: reference, bytes, complete; each POST with its own token for 
 	assert.notEqual(begin.headers.authorization, complete.headers.authorization);
 	assert.match(begin.headers.authorization, new RegExp(`^Bearer oidc-\\d+-${cp.url.replace(/[.:/]/g, '\\$&')}$`));
 	assert.equal(cp.releases.get(result.id).state, 'available');
+});
+
+test('step 1: an agent build sends its manifest reader, which a stack never has', async () => {
+	const reader = lockedReaders().r30;
+	const agentRef = signedRef({ kind: 'agent', name: 'zutun-agent-linux-amd64', version: 5 });
+	const ok = await attempt({}, { ref: agentRef, upload: { manifestReader: reader } });
+	assert.equal(ok.error, undefined);
+	assert.deepEqual(JSON.parse(ok.cp.requests[0].body), { ...agentRef, commit: COMMIT, notes: 'First release.', manifest_reader: reader });
+
+	for (const missing of [null, '', 'ABAECBDD'.padEnd(64, '0'), 'abc']) {
+		const { error, cp } = await attempt({}, { ref: agentRef, upload: { manifestReader: missing } });
+		assert.match(error.message, /agent zutun-agent-linux-amd64 v5 has no manifest reader .*CONTROL-PLANE §7, step 1/, String(missing));
+		assert.equal(cp.requests.length, 0, 'refused before asking the control plane');
+	}
+	const stack = await attempt({}, { upload: { manifestReader: reader } });
+	assert.match(stack.error.message, /stack mail v12: only an agent build has a manifest reader/);
+	assert.equal(stack.cp.requests.length, 0);
+});
+
+test('step 1: a reader the control plane does not know is explained, not retried', async () => {
+	const agentRef = signedRef({ kind: 'agent', name: 'zutun-agent-linux-arm64', version: 5 });
+	const reader = 'e'.repeat(64);
+	const { error, cp } = await attempt({}, { ref: agentRef, upload: { manifestReader: reader } });
+	assert.match(error.message, new RegExp(`refused \\(422\\): the control plane doesn't know this build's manifest reader ${reader}\\.`));
+	assert.match(error.message, /deploy that control plane first, then re-run\.$/);
+	assert.equal(cp.requests.length, 1);
 });
 
 test('step 1: a 503 is retried with a fresh token', async () => {

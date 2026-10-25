@@ -5,6 +5,11 @@
 #   stacks: plan ── images ── bundle ── lint ──┬── publish-staging (only when configured)
 #   agent:  plan ── agent ─────────────────────┴── publish (environment "release")
 #
+# Lint checks `host` twice: with the pinned agent, as every stack, and with the floor agent
+# (agent tag v1, build 1), because `host` carries the recovery scripts and must be readable by
+# every build in the field (MANIFEST §2.2, architecture §8). The agent job sends the build's
+# manifest reader, the sha256 of the schema it embeds, with the upload (CONTROL-PLANE §7).
+#
 # A push to main builds and checks without pushing, signing or uploading. A tag v<N> releases
 # version N; for the agent, N is the build number of both zutun-agent-linux-amd64 and -arm64.
 # The jobs are the same as module.yml's, with the key and the agent build being the
@@ -175,6 +180,19 @@ jobs:
           agent-commit: ${{ inputs.agent-commit }}
           app-client-id: ${{ secrets.PLATFORM_APP_CLIENT_ID }}
           app-private-key: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
+      # The recovery floor (review D-134): `host` again, with the floor agent. The commit is
+      # FLOOR_AGENT_COMMIT of scripts/lib/lint.mjs, written here and never an input (a test keeps
+      # the two equal), and the name is the plan's, from the repository.
+      - name: Lint with the floor agent
+        if: needs.plan.outputs.name == 'host'
+        uses: ./.release/.github/actions/lint
+        with:
+          name: ${{ needs.plan.outputs.name }}
+          bundle-sha256: ${{ needs.bundle.outputs.sha256 }}
+          agent-commit: dde9f9baadf960d6031221e59a5495bd3039174e
+          floor: "true"
+          app-client-id: ${{ secrets.PLATFORM_APP_CLIENT_ID }}
+          app-private-key: ${{ secrets.PLATFORM_APP_PRIVATE_KEY }}
 
   # The production agent (architecture §9: -tags prod embeds the release keys, never the
   # staging key), cross-compiled for both architectures in one job.
@@ -217,11 +235,13 @@ jobs:
         env:
           BUILD: ${{ needs.plan.outputs.version }}
         run: sh .release/scripts/build-agent.sh "$RUNNER_TEMP/release" "$BUILD"
+      # The build's manifest reader (MANIFEST §2.2): agent-release.mjs hashes the schema file the
+      # build compiles in, from this checkout, into release.json for the upload.
       - name: Describe the release
         id: describe
         env:
           BUILD: ${{ needs.plan.outputs.version }}
-        run: node .release/scripts/agent-release.mjs --dir "$RUNNER_TEMP/release" --version "$BUILD"
+        run: node .release/scripts/agent-release.mjs --dir "$RUNNER_TEMP/release" --version "$BUILD" --manifest-schema internal/manifest/manifest.v1.schema.json
       - name: Hand the builds on
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

@@ -3,13 +3,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { gunzipSync } from 'node:zlib';
 import { PLACEHOLDER_DIGEST } from '../scripts/lib/compose.mjs';
 import { AGENT_COMMIT } from '../scripts/lib/lint.mjs';
-import { platformFile, readJson, repo, scratch } from './helpers.mjs';
+import { lockedReaders, platformFile, readJson, repo, scratch } from './helpers.mjs';
 
 const COMMIT = 'abcdef0123456789abcdef0123456789abcdef01';
 const D = `sha256:${'5'.repeat(64)}`;
@@ -185,16 +185,33 @@ test('stack-bundle.mjs: main keeps the placeholders but checks them against the 
 	assert.match(missing.stderr, /::error::compose.yaml line 3: ghcr.io\/zutun-ch\/mail carries the placeholder digest, but this repo builds no image/);
 });
 
-test('agent-release.mjs describes both architectures as one release', () => {
-	const dir = scratch({ 'zutun-agent-linux-amd64': 'a', 'zutun-agent-linux-arm64': 'bb' });
-	const r = runScript('agent-release.mjs', ['--dir', dir, '--version', '42'], { cwd: dir });
+test('agent-release.mjs describes both architectures as one release, with their manifest reader', () => {
+	// The agent's checkout as the agent job has it: the schema the build embeds, here the floor's.
+	const r22 = readFileSync(platformFile('spec/manifest/readers/r22.schema.json'));
+	const dir = scratch({ 'zutun-agent-linux-amd64': 'a', 'zutun-agent-linux-arm64': 'bb', 'internal/manifest/manifest.v1.schema.json': r22 });
+	const r = runScript('agent-release.mjs', ['--dir', dir, '--version', '42', '--manifest-schema', 'internal/manifest/manifest.v1.schema.json'], { cwd: dir });
 	assert.equal(r.status, 0, r.stderr);
 	const release = JSON.parse(readFileSync(path.join(dir, 'release.json'), 'utf8'));
-	assert.deepEqual(release.artifacts.map((a) => [a.kind, a.name, a.version, a.size]), [
-		['agent', 'zutun-agent-linux-amd64', 42, 1],
-		['agent', 'zutun-agent-linux-arm64', 42, 2],
+	const reader = lockedReaders().r22;
+	assert.deepEqual(release.artifacts.map((a) => [a.kind, a.name, a.version, a.size, a.manifest_reader]), [
+		['agent', 'zutun-agent-linux-amd64', 42, 1, reader],
+		['agent', 'zutun-agent-linux-arm64', 42, 2, reader],
 	]);
 	assert.equal(r.outputs['release-sha256'], createHash('sha256').update(readFileSync(path.join(dir, 'release.json'))).digest('hex'));
+	assert.match(r.summary, new RegExp(`Manifest reader \`${reader}\``));
+});
+
+test('agent-release.mjs needs the manifest schema the build embeds', () => {
+	const dir = scratch({ 'zutun-agent-linux-amd64': 'a', 'zutun-agent-linux-arm64': 'bb', 'empty.json': '' });
+	const none = runScript('agent-release.mjs', ['--dir', dir, '--version', '42'], { cwd: dir });
+	assert.equal(none.status, 1);
+	assert.match(none.stderr, /::error::usage: --manifest-schema/);
+	const missing = runScript('agent-release.mjs', ['--dir', dir, '--version', '42', '--manifest-schema', 'internal/manifest/manifest.v1.schema.json'], { cwd: dir });
+	assert.equal(missing.status, 1);
+	assert.match(missing.stderr, /::error::can't read internal\/manifest\/manifest\.v1\.schema\.json, the manifest schema the agent build embeds \(MANIFEST §2\.2\): ENOENT/);
+	const empty = runScript('agent-release.mjs', ['--dir', dir, '--version', '42', '--manifest-schema', 'empty.json'], { cwd: dir });
+	assert.match(empty.stderr, /::error::empty\.json, the manifest schema the agent build embeds, is empty/);
+	assert.equal(existsSync(path.join(dir, 'release.json')), false, 'no release.json without a reader');
 });
 
 test('require-vars.mjs names every missing variable', () => {
@@ -267,6 +284,29 @@ test('lint-bundle.sh: exit 1 without a finding breaks the contract and fails', (
 	const r = runScript('lint-bundle.sh', [fakeAgent(1), 'mail', '/tmp/b']);
 	assert.equal(r.status, 1);
 	assert.match(r.stdout, /^::error title=zutun-agent lint::zutun-agent lint exited 1 without a finding on stdout/);
+});
+
+test('lint-bundle.sh at the floor: titled as the floor agent, explained by the floor form', () => {
+	const agent = fakeAgent(0);
+	const clean = runScript('lint-bundle.sh', [agent, 'host', '/tmp/b', 'true']);
+	assert.equal(clean.status, 0);
+	assert.match(clean.stdout, /^zutun-agent lint at the floor: host is clean$/m);
+	assert.deepEqual(readFileSync(path.join(path.dirname(agent), 'args'), 'utf8').trim().split('\n'), ['lint', '--kind', 'stack', '--name', 'host', '/tmp/b'], 'the same call as the pinned agent');
+
+	const r = runScript('lint-bundle.sh', [fakeAgent(1, 'schema_invalid: /scripts/0: additional properties title\nsomething_new: detail\n'), 'host', '/tmp/b', 'true']);
+	assert.equal(r.status, 1);
+	assert.deepEqual(r.stdout.trim().split('\n'), [
+		'::error title=zutun-agent lint at the floor - manifest (MANIFEST §2)::schema_invalid: /scripts/0: additional properties title',
+		'::error title=zutun-agent lint at the floor::something_new: detail',
+	]);
+	assert.match(r.stderr, /written in floor form \(MANIFEST §2\.2\).*Keep manifest\.yaml equal to the platform's spec\/manifest\/examples\/host\.yaml/);
+	assert.match(runScript('lint-bundle.sh', [fakeAgent(2), 'host', '/tmp/b', 'true']).stdout, /^::error title=zutun-agent lint at the floor::the floor agent refused the call as a usage error/);
+	// Without the argument, or with anything but "true", it is the ordinary lint.
+	for (const extra of [[], ['false']]) {
+		const plain = runScript('lint-bundle.sh', [fakeAgent(1, 'yaml_invalid: x\n'), 'host', '/tmp/b', ...extra]);
+		assert.equal(plain.stdout.trim(), '::error title=zutun-agent lint - YAML::yaml_invalid: x');
+		assert.doesNotMatch(plain.stderr, /floor/);
+	}
 });
 
 test('lint-bundle.sh: a usage error means the pinned agent has no lint yet', () => {

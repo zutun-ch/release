@@ -4,7 +4,8 @@
 // 2. derive the key id from the KMS key version and check the key may sign these artifacts;
 // 3. fetch the key's public key and sign every artifact's reference through Cloud KMS;
 // 4. verify every signature locally against that public key;
-// 5. only then upload each artifact in the three steps of CONTROL-PLANE §7.
+// 5. only then upload each artifact in the three steps of CONTROL-PLANE §7, an agent build with
+//    its manifest reader from release.json (unsigned registration data, CONTROL-PLANE §7).
 // Nothing is uploaded unless every artifact of the release is signed and verified, so the two
 // agent architectures go out together or not at all.
 
@@ -42,11 +43,11 @@ export async function publish({ dir, commit, expected, origin, kmsKeyVersion, fa
 		if (!verifyRef(publicKey, ref, sig)) {
 			throw new ReleaseError(`the signature Cloud KMS returned for ${a.name} v${a.version} doesn't verify against ${keyId}'s public key`);
 		}
-		refs.push({ ref: { ...ref, sig, key_id: keyId }, bytes: a.bytes });
+		refs.push({ ref: { ...ref, sig, key_id: keyId }, bytes: a.bytes, manifestReader: a.manifest_reader });
 	}
 
-	for (const { ref, bytes } of refs) {
-		await uploadRelease({ origin, ref, commit, notes: release.notes, bytes, nextToken, fetch, retry, log });
+	for (const { ref, bytes, manifestReader } of refs) {
+		await uploadRelease({ origin, ref, commit, notes: release.notes, manifestReader, bytes, nextToken, fetch, retry, log });
 	}
 	return refs.map((r) => r.ref);
 }

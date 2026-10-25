@@ -60,6 +60,7 @@ test("the platform's host example: every entrypoint is found", () => {
 		'scripts/logs/collect.sh',
 		'scripts/stacks/purge.sh',
 		'scripts/diag/docker.sh',
+		'scripts/agent/repair.sh',
 	]);
 	checkIdentity(host, { name: 'host', version: 4 });
 });

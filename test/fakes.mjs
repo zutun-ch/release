@@ -5,7 +5,7 @@
 import { createHash, sign } from 'node:crypto';
 import { crc32c } from '../scripts/lib/crc32c.mjs';
 import { verifyRef } from '../scripts/lib/artifact.mjs';
-import { fakeServer } from './helpers.mjs';
+import { fakeServer, lockedReaders } from './helpers.mjs';
 
 /** GitHub's token endpoint: a new token for each request, recording the audience asked for. */
 export async function fakeGithubOidc() {
@@ -55,13 +55,14 @@ export async function fakeKms(name, key, options = {}) {
 }
 
 /**
- * The control plane's release upload: checks fresh tokens, the commit, versions, the signature
+ * The control plane's release upload: checks fresh tokens, the commit, an agent build's manifest
+ * reader against `readers` (default: the platform's readers.lock), versions, the signature
  * against `publicKey` and the uploaded bytes. `script` overrides answers per step and attempt:
  * { begin: [answer…], put: [...], complete: [...] }, where an answer is an HTTP answer or 'drop'
  * (the connection closes without one), or a function of { releases, id } returning one; once a
  * list is used up the fake answers for real.
  */
-export async function fakeControlPlane({ publicKey, commit, script = {} }) {
+export async function fakeControlPlane({ publicKey, commit, script = {}, readers = Object.values(lockedReaders()) }) {
 	const seen = new Set();
 	const releases = new Map();
 	const attempts = { begin: 0, put: 0, complete: 0 };
@@ -85,6 +86,8 @@ export async function fakeControlPlane({ publicKey, commit, script = {} }) {
 			const body = JSON.parse(req.body);
 			const { kind, name, version, sha256, size, sig, key_id } = body;
 			if (body.commit !== commit) return { status: 403, json: { code: 'commit' } };
+			if (kind === 'agent' && !/^[0-9a-f]{64}$/.test(body.manifest_reader ?? '')) return { status: 400, json: { code: 'invalid_request' } };
+			if (kind === 'agent' && !readers.includes(body.manifest_reader)) return { status: 422, json: { code: 'reader_unknown' } };
 			if ([...releases.values()].some((r) => r.ref.name === name && r.ref.version >= version)) {
 				return { status: 409, json: { code: 'version' } };
 			}

@@ -21,6 +21,20 @@ export function platformFile(rel) {
 
 export const readJson = (file) => JSON.parse(readFileSync(file, 'utf8'));
 
+/**
+ * The frozen manifest readers of the platform's readers.lock (MANIFEST §2.2), as
+ * { file name without .schema.json: sha256 }, in the order they were frozen.
+ */
+export function lockedReaders() {
+	const lock = readFileSync(platformFile('spec/manifest/readers/readers.lock'), 'utf8');
+	const readers = {};
+	for (const line of lock.split('\n')) {
+		const m = /^([0-9a-f]{64}) {2}(\S+)\.schema\.json$/.exec(line);
+		if (m) readers[m[2]] = m[1];
+	}
+	return readers;
+}
+
 /** An Ed25519 key pair from a 32-byte seed (hex), as the vectors define their keys. */
 export function keyFromSeed(seedHex) {
 	const der = Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.from(seedHex, 'hex')]);

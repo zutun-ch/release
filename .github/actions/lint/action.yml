@@ -2,7 +2,9 @@
 # one implementation of the manifest schema and the compose policy (MANIFEST §9). The agent is
 # built from the agent repo (<owner>/agent) at a pinned commit, with -tags staging (the lint doesn't depend on
 # the trust anchors). That repo is private: the organisation's GitHub App issues a read-only
-# token for it, revoked when the job ends.
+# token for it, revoked when the job ends. A job may run it more than once, with different
+# agents (core.yml lints `host` with the floor agent too): each run works in directories of
+# its own, named after the agent commit.
 name: Lint
 description: Check the bundle with zutun-agent lint.
 
@@ -22,6 +24,12 @@ inputs:
   app-private-key:
     description: The private key of the organisation's GitHub App.
     required: true
+  floor:
+    description: >
+      "true" for the floor lint of `host` (core.yml, MANIFEST §2.2): the findings are titled and
+      explained as the floor agent's. Only the wording changes; the commit is agent-commit.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -45,7 +53,7 @@ runs:
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
         name: release-build
-        path: ${{ runner.temp }}/release
+        path: ${{ runner.temp }}/lint-${{ inputs.agent-commit }}/release
 
     # Lint the bundle the bundle job packed, nothing else: any job of the caller's workflow can
     # upload an artifact, but none can change the bundle job's output.
@@ -54,14 +62,16 @@ runs:
       env:
         NAME: ${{ inputs.name }}
         SHA256: ${{ inputs.bundle-sha256 }}
+        AGENT_COMMIT: ${{ inputs.agent-commit }}
       run: |
-        actual=$(sha256sum "$RUNNER_TEMP/release/$NAME.tar.gz" | cut -d' ' -f1)
+        work="$RUNNER_TEMP/lint-$AGENT_COMMIT"
+        actual=$(sha256sum "$work/release/$NAME.tar.gz" | cut -d' ' -f1)
         if ! printf '%s' "$SHA256" | grep -Eqx '[0-9a-f]{64}' || [ "$actual" != "$SHA256" ]; then
           echo "::error::$NAME.tar.gz isn't the bundle the bundle job packed (sha256 $actual, reported \"$SHA256\"); nothing is linted or signed"
           exit 1
         fi
-        mkdir "$RUNNER_TEMP/bundle"
-        tar -xzf "$RUNNER_TEMP/release/$NAME.tar.gz" -C "$RUNNER_TEMP/bundle"
+        mkdir "$work/bundle"
+        tar -xzf "$work/release/$NAME.tar.gz" -C "$work/bundle"
 
     - name: Token for the agent repo
       id: agent-token
@@ -78,23 +88,27 @@ runs:
       with:
         repository: ${{ github.repository_owner }}/agent
         ref: ${{ inputs.agent-commit }}
-        path: .agent
+        path: .agent-${{ inputs.agent-commit }}
         token: ${{ steps.agent-token.outputs.token }}
         persist-credentials: false
 
     # No module cache: a release build never reads state an earlier run could have written.
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
-        go-version-file: .agent/go.mod
+        go-version-file: .agent-${{ inputs.agent-commit }}/go.mod
         cache: false
 
     - name: Build zutun-agent
       shell: bash
-      working-directory: .agent
-      run: go build -tags staging -o "$RUNNER_TEMP/zutun-agent" ./cmd/zutun-agent
+      working-directory: .agent-${{ inputs.agent-commit }}
+      env:
+        AGENT_COMMIT: ${{ inputs.agent-commit }}
+      run: go build -tags staging -o "$RUNNER_TEMP/lint-$AGENT_COMMIT/zutun-agent" ./cmd/zutun-agent
 
     - name: zutun-agent lint
       shell: bash
       env:
         NAME: ${{ inputs.name }}
-      run: sh "$GITHUB_ACTION_PATH/../../../scripts/lint-bundle.sh" "$RUNNER_TEMP/zutun-agent" "$NAME" "$RUNNER_TEMP/bundle"
+        AGENT_COMMIT: ${{ inputs.agent-commit }}
+        FLOOR: ${{ inputs.floor }}
+      run: sh "$GITHUB_ACTION_PATH/../../../scripts/lint-bundle.sh" "$RUNNER_TEMP/lint-$AGENT_COMMIT/zutun-agent" "$NAME" "$RUNNER_TEMP/lint-$AGENT_COMMIT/bundle" "$FLOOR"

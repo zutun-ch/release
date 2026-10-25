@@ -1,7 +1,7 @@
 // Signing through (a fake) Cloud KMS, checking the signature locally, and uploading: the whole
 // publish step against local fakes of KMS, GitHub's token endpoint and the control plane.
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { after, test } from 'node:test';
 import { verifyRef } from '../scripts/lib/artifact.mjs';
@@ -10,7 +10,7 @@ import { githubTokens } from '../scripts/lib/oidc.mjs';
 import { publish } from '../scripts/lib/publish.mjs';
 import { releaseFileSha256, writeRelease } from '../scripts/lib/release.mjs';
 import { fakeControlPlane, fakeGithubOidc, fakeKms } from './fakes.mjs';
-import { keyFromSeed, noWait, scratch } from './helpers.mjs';
+import { keyFromSeed, lockedReaders, noWait, scratch } from './helpers.mjs';
 
 const core = keyFromSeed('c3604e89883933a9ad5c91e88080622bcff34f300d7f612535d9cdb58cf8d9a0');
 const other = keyFromSeed('d41b6f45986507a1986737215acdbd82b93e1c4ecd65876c51a03411efc36abe');
@@ -18,6 +18,8 @@ const COMMIT = '1234567890abcdef1234567890abcdef12345678';
 const RING = 'projects/release-test/locations/europe-west6/keyRings/zutun-release';
 const CORE_KEY = `${RING}/cryptoKeys/release-core/cryptoKeyVersions/1`;
 const MODULES_KEY = `${RING}/cryptoKeys/release-modules/cryptoKeyVersions/1`;
+// The agent builds' manifest reader, as agent-release.mjs records it: a reader of the lock.
+const READER = lockedReaders().r30;
 
 const oidc = await fakeGithubOidc();
 after(() => oidc.close());
@@ -28,7 +30,7 @@ function agentBuild() {
 	writeRelease(dir, {
 		commit: COMMIT,
 		notes: 'Build 42.',
-		artifacts: ['amd64', 'arm64'].map((arch) => ({ kind: 'agent', name: `zutun-agent-linux-${arch}`, version: 42, file: `zutun-agent-linux-${arch}` })),
+		artifacts: ['amd64', 'arm64'].map((arch) => ({ kind: 'agent', name: `zutun-agent-linux-${arch}`, version: 42, file: `zutun-agent-linux-${arch}`, manifest_reader: READER })),
 	});
 	return dir;
 }
@@ -72,6 +74,42 @@ test('both agent builds are signed with release-core-1, verified and uploaded', 
 	for (const r of refs) assert.ok(verifyRef(core.publicKey, r, r.sig));
 	assert.equal([...cp.releases.values()].filter((r) => r.state === 'available').length, 2);
 	assert.ok(lines.some((l) => l === 'signing with release-core-1, public key D/kyP7cKfQ81Gghg6hr2+zC6exEhkNMSe4cdqMs7sts='));
+});
+
+test("each agent build's upload carries its manifest reader; a stack's carries none (CONTROL-PLANE §7, step 1)", async () => {
+	const { error, cp } = await run();
+	assert.equal(error, undefined);
+	const begins = cp.requests.filter((r) => r.url === '/api/releases').map((r) => JSON.parse(r.body));
+	assert.deepEqual(begins.map((b) => [b.name, b.manifest_reader]), [
+		['zutun-agent-linux-amd64', READER],
+		['zutun-agent-linux-arm64', READER],
+	]);
+
+	const dir = scratch({ 'mail.tar.gz': 'bundle' });
+	writeRelease(dir, { commit: COMMIT, notes: null, artifacts: [{ kind: 'stack', name: 'mail', version: 3, file: 'mail.tar.gz' }] });
+	const stack = await run({ dir, key: MODULES_KEY, family: 'release-modules', expected: { kind: 'stack', name: 'mail', version: 3, releaseSha256: releaseFileSha256(dir) } });
+	assert.equal(stack.error, undefined);
+	const [begin] = stack.cp.requests.filter((r) => r.url === '/api/releases').map((r) => JSON.parse(r.body));
+	assert.equal(begin.name, 'mail');
+	assert.ok(!('manifest_reader' in begin), 'a stack upload has no manifest_reader');
+});
+
+test('an agent build without a manifest reader in release.json is refused before anything is signed', async () => {
+	const dir = agentBuild();
+	const file = path.join(dir, 'release.json');
+	const release = JSON.parse(readFileSync(file, 'utf8'));
+	delete release.artifacts[1].manifest_reader;
+	writeFileSync(file, JSON.stringify(release));
+	const { error, kms, cp } = await run({ dir, expected: agentPlan(dir) });
+	assert.match(error.message, /release\.json: the agent build zutun-agent-linux-arm64 has no manifest reader/);
+	assert.equal(kms.requests.length, 0);
+	assert.equal(cp.requests.length, 0);
+});
+
+test('a manifest reader the control plane does not know stops the upload and says what comes first', async () => {
+	const { error, cp } = await run({ cp: { readers: [] } });
+	assert.match(error.message, /refused \(422\): the control plane doesn't know this build's manifest reader [0-9a-f]{64}\. .*readers\.lock.*deploy that control plane first/);
+	assert.equal(cp.requests.length, 1, 'no retry, no PUT, no second architecture');
 });
 
 test('the data signed is the signed string itself (Ed25519 signs data, not a digest), with its CRC32C', async () => {
@@ -163,7 +201,7 @@ test('a release.json other than the one the build job wrote is refused, however 
 	writeRelease(dir, {
 		commit: COMMIT,
 		notes: 'Build 42.',
-		artifacts: ['amd64', 'arm64'].map((arch) => ({ kind: 'agent', name: `zutun-agent-linux-${arch}`, version: 42, file: `zutun-agent-linux-${arch}` })),
+		artifacts: ['amd64', 'arm64'].map((arch) => ({ kind: 'agent', name: `zutun-agent-linux-${arch}`, version: 42, file: `zutun-agent-linux-${arch}`, manifest_reader: READER })),
 	});
 	const { error, kms, cp } = await run({ dir, expected });
 	assert.match(error.message, /release\.json isn't the one the build job of this run wrote/);
@@ -189,7 +227,7 @@ test('only what the plan names is signed: another name, kind or version is refus
 	}
 	// The agent's plan wants both architectures, not one.
 	const one = scratch({ 'zutun-agent-linux-amd64': 'amd64 binary' });
-	writeRelease(one, { commit: COMMIT, notes: null, artifacts: [{ kind: 'agent', name: 'zutun-agent-linux-amd64', version: 42, file: 'zutun-agent-linux-amd64' }] });
+	writeRelease(one, { commit: COMMIT, notes: null, artifacts: [{ kind: 'agent', name: 'zutun-agent-linux-amd64', version: 42, file: 'zutun-agent-linux-amd64', manifest_reader: READER }] });
 	const { error } = await run({ dir: one, expected: { ...agentPlan(one) } });
 	assert.match(error.message, /this run releases agent zutun-agent-linux-amd64 v42, agent zutun-agent-linux-arm64 v42, but release\.json lists agent zutun-agent-linux-amd64 v42/);
 });
