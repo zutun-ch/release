@@ -11,7 +11,7 @@ import { ReleaseError } from './actions.mjs';
  * core.yml, which a test keeps equal to this. Raise all three together when an agent release
  * changes `zutun-agent lint` (README, "The agent commit for lint").
  */
-export const AGENT_COMMIT = '76b737e1aff4d2ad774f8b5a02dbf5ffe023d722';
+export const AGENT_COMMIT = '6d1b20dd0d39a5119428e625b33ae68a6f03f4d5';
 
 /**
  * The agent at the recovery floor (MANIFEST §2.2, architecture §8, review D-134): agent tag v1,
